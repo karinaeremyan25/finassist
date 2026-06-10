@@ -1,0 +1,134 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Фон — толща воды (deep → crest) */
+  --bg-base: #0b2926;
+  --bg-deep: #0d2c29;
+  --bg-crest: #1f584a;
+
+  /* Поверхности */
+  --surface-1: #143733;
+  --surface-2: #1a473e;
+  --surface-3: #21564b;
+  --surface-nav: #0a322c;
+
+  /* Текст */
+  --text: #f0faf8;
+  --text-muted: #8fb3ad;
+  --text-faint: #5e827c;
+
+  /* Акценты — лагуна */
+  --accent: #2dd4bf;
+  --accent-soft: #5eead4;
+  --accent-ink: #04201c;
+
+  /* Семантика денег */
+  --income: #34d399;
+  --expense: #fb7a6e;
+  --warning: #fbbf24;
+
+  /* Границы / линии */
+  --border: rgba(255, 255, 255, 0.07);
+  --border-strong: #21504a;
+  --ring: #2dd4bf;
+
+  /* Диаграмма (donut) */
+  --chart-expense: #fb7a6e;
+  --chart-profit: #34d399;
+  --chart-fund-cred: #fbbf24;
+  --chart-tax: #94a3b8;
+  --chart-fund-grat: #38bdf8;
+  --chart-track: #123a35;
+
+  /* Градиенты */
+  --grad-header: linear-gradient(160deg, #1f584a 0%, #123f38 55%, #0d2c29 100%);
+  --grad-balance: linear-gradient(135deg, #1a473e 0%, #16524a 100%);
+  --glow-accent: 0 0 16px rgba(45, 212, 191, 0.35);
+
+  --font: 'Inter', -apple-system, 'SF Pro Text', system-ui, sans-serif;
+  --nav-h: 64px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font);
+  background: var(--bg-base);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Табличные цифры для денег — не «прыгают» при обновлении */
+.num {
+  font-feature-settings: 'tnum' 1, 'cv01' 1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Скрыто визуально, доступно скринридерам */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Shimmer для skeleton */
+@keyframes shimmer {
+  0% {
+    background-position: -480px 0;
+  }
+  100% {
+    background-position: 480px 0;
+  }
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--surface-1) 0%,
+    var(--surface-2) 40%,
+    var(--surface-1) 80%
+  );
+  background-size: 480px 100%;
+  animation: shimmer 1.4s infinite linear;
+  border-radius: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+.safe-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}

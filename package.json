@@ -1,0 +1,41 @@
+{
+  "name": "finassist",
+  "version": "1.0.0",
+  "description": "Telegram-бот финансового учёта для ИП и ООО",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "lint": "eslint src --ext .ts && tsc --noEmit",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "grammy": "^1.29.0",
+    "postgres": "^3.4.4",
+    "@anthropic-ai/sdk": "^0.36.0",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
+    "papaparse": "^5.4.1",
+    "pdf-parse": "^1.1.1",
+    "zod": "^3.23.8",
+    "pino": "^9.5.0",
+    "node-cron": "^3.0.3"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "@types/node": "^20.14.0",
+    "@types/papaparse": "^5.3.14",
+    "@types/pdf-parse": "^1.1.4",
+    "@types/node-cron": "^3.0.11",
+    "eslint": "^8.57.0",
+    "@typescript-eslint/eslint-plugin": "^7.13.0",
+    "@typescript-eslint/parser": "^7.13.0",
+    "vitest": "^1.6.0",
+    "tsx": "^4.15.6",
+    "pino-pretty": "^11.2.1"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

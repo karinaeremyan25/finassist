@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Психология Здоровья — Mini App (прототип)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg-base:#0B2926; --bg-deep:#0D2C29; --bg-crest:#1F584A;
+    --surface-1:#143733; --surface-2:#1A473E; --surface-3:#21564B; --surface-nav:#0A322C;
+    --text:#F0FAF8; --text-muted:#8FB3AD; --text-faint:#5E827C;
+    --accent:#2DD4BF; --accent-soft:#5EEAD4; --accent-ink:#04201C;
+    --income:#34D399; --expense:#FB7A6E; --warning:#FBBF24;
+    --border:rgba(255,255,255,.07); --border-strong:#21504A;
+    --c-expense:#FB7A6E; --c-profit:#34D399; --c-cred:#FBBF24;
+    --c-tax:#94A3B8; --c-grat:#38BDF8; --c-track:#123A35;
+    --r-sm:10px; --r-md:16px; --r-lg:22px;
+  }
+  *{box-sizing:border-box; margin:0; padding:0}
+  body{
+    font-family:'Inter',-apple-system,system-ui,sans-serif;
+    background:#05100E; color:var(--text);
+    display:flex; justify-content:center; padding:24px 0;
+    min-height:100vh;
+  }
+  .num{font-variant-numeric:tabular-nums; font-feature-settings:'tnum' 1}
+  .phone{
+    width:390px; min-height:780px; background:var(--bg-deep);
+    border-radius:34px; overflow:hidden; position:relative;
+    box-shadow:0 24px 70px rgba(0,0,0,.55); border:1px solid #15403A;
+  }
+  /* ---- Шапка (волна) ---- */
+  .header{
+    position:relative; padding:18px 20px 26px;
+    background:linear-gradient(160deg,#1F584A 0%,#123F38 55%,#0D2C29 100%);
+  }
+  .header::after{ /* блик-волна */
+    content:""; position:absolute; inset:0;
+    background:radial-gradient(120% 70% at 80% -10%, rgba(94,234,212,.14), transparent 60%);
+    pointer-events:none;
+  }
+  .topbar{display:flex; justify-content:space-between; align-items:flex-start}
+  .brand{font-size:12px; font-weight:600; letter-spacing:.18em; color:var(--accent-soft)}
+  .brand small{display:block; letter-spacing:.32em; font-weight:500; color:var(--text-muted); margin-top:3px}
+  .avatar{
+    width:42px;height:42px;border-radius:50%;border:1px solid rgba(94,234,212,.5);
+    display:grid;place-items:center;color:var(--accent-soft);font-weight:600;
+    background:rgba(20,184,166,.12)
+  }
+  /* ---- Карточка баланса ---- */
+  .balance{
+    margin-top:22px; padding:20px; border-radius:var(--r-lg);
+    background:linear-gradient(135deg,#1A473E 0%,#16524A 100%);
+    border:1px solid var(--border-strong);
+    box-shadow:0 8px 24px rgba(0,0,0,.35);
+  }
+  .label{font-size:11px; font-weight:600; letter-spacing:.12em; color:var(--text-muted); text-transform:uppercase}
+  .balance .amt{font-size:36px; font-weight:700; margin:8px 0 6px; letter-spacing:-.5px}
+  .delta{font-size:13px; font-weight:500}
+  .delta.up{color:var(--income)} .delta.down{color:var(--expense)}
+  /* ---- KPI ---- */
+  .kpis{display:grid; grid-template-columns:1fr 1fr; gap:12px; padding:16px 20px 4px}
+  .kpi{background:var(--surface-2); border:1px solid var(--border); border-radius:var(--r-md); padding:14px}
+  .kpi .ic{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;margin-bottom:12px}
+  .kpi.inc .ic{background:rgba(52,211,153,.15); color:var(--income)}
+  .kpi.exp .ic{background:rgba(251,122,110,.15); color:var(--expense)}
+  .kpi .v{font-size:21px; font-weight:700; margin-top:2px}
+  .kpi.inc .v{color:var(--income)} .kpi.exp .v{color:var(--expense)}
+  /* ---- Секция ---- */
+  .section-title{font-size:11px;font-weight:600;letter-spacing:.12em;color:var(--text-muted);text-transform:uppercase;padding:18px 20px 10px}
+  .card{margin:0 20px; background:var(--surface-1); border:1px solid var(--border); border-radius:var(--r-lg); padding:18px}
+  .card-head{display:flex; justify-content:space-between; align-items:center; margin-bottom:6px}
+  .card-head h2{font-size:16px; font-weight:600}
+  .pill{font-size:12px; font-weight:500; color:var(--accent-soft); background:rgba(45,212,191,.12); border:1px solid rgba(45,212,191,.3); padding:5px 12px; border-radius:999px}
+  /* ---- Donut ---- */
+  .donut-sub{font-size:12px; color:var(--text-faint); margin-top:2px}
+  .donut-sub b{color:var(--text-muted); font-weight:600}
+  .donut-wrap{display:flex; align-items:center; gap:18px; margin-top:14px}
+  .donut{position:relative; width:148px; height:148px; flex:none}
+  .donut svg{transform:rotate(-90deg)}
+  .donut .center{position:absolute; inset:0; display:grid; place-content:center; text-align:center}
+  .donut .center .cap{font-size:10px; letter-spacing:.14em; color:var(--text-muted); font-weight:600}
+  .donut .center .pct{font-size:30px; font-weight:700; line-height:1.05}
+  .legend{flex:1; display:flex; flex-direction:column; gap:11px}
+  .leg{display:flex; align-items:center; gap:9px; font-size:13px}
+  .leg .dot{width:10px;height:10px;border-radius:3px;flex:none}
+  .leg .nm{color:var(--text-muted); flex:1}
+  .leg .amt{font-weight:700}
+  .leg .pc{color:var(--text-faint); font-size:11px; width:32px; text-align:right}
+  /* ---- Операции ---- */
+  .ops{margin-top:6px}
+  .op{display:flex; align-items:center; gap:12px; padding:13px 0; border-bottom:1px solid var(--border)}
+  .op:last-child{border-bottom:none}
+  .op .oic{width:38px;height:38px;border-radius:10px;background:var(--surface-3);display:grid;place-items:center;color:var(--accent-soft);flex:none}
+  .op .meta{flex:1}
+  .op .meta .t{font-size:14px; font-weight:500}
+  .op .meta .s{font-size:12px; color:var(--text-faint); margin-top:2px}
+  .op .sum{font-weight:700; font-size:14px}
+  .op .sum.p{color:var(--income)} .op .sum.n{color:var(--expense)}
+  .link{font-size:12px; color:var(--accent-soft)}
+  /* ---- Нижняя навигация ---- */
+  .nav{
+    position:sticky; bottom:0; margin-top:18px;
+    display:grid; grid-template-columns:repeat(4,1fr);
+    background:rgba(10,50,44,.92); backdrop-filter:blur(12px);
+    border-top:1px solid var(--border); padding:10px 6px 16px;
+  }
+  .nav a{display:grid; justify-items:center; gap:5px; font-size:11px; color:var(--text-faint); text-decoration:none}
+  .nav a.active{color:var(--accent)}
+  .nav a.active .nic{filter:drop-shadow(0 0 8px rgba(45,212,191,.55))}
+  svg.i{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+  .scroll{max-height:none; padding-bottom:4px}
+</style>
+</head>
+<body>
+<div class="phone">
+  <!-- Шапка -->
+  <div class="header">
+    <div class="topbar">
+      <div class="brand">ПСИХОЛОГИЯ<small>ЗДОРОВЬЯ</small></div>
+      <div class="avatar">К</div>
+    </div>
+    <div class="balance">
+      <div class="label">Общий баланс</div>
+      <div class="amt num">₽ 4 280 500</div>
+      <div class="delta up">▲ +12,4% к прошлому месяцу</div>
+    </div>
+  </div>
+
+  <!-- KPI -->
+  <div class="kpis">
+    <div class="kpi inc">
+      <div class="ic"><svg class="i" viewBox="0 0 24 24"><path d="M7 17 17 7M17 7H8M17 7v9"/></svg></div>
+      <div class="label">Доходы</div>
+      <div class="v num">₽ 2 840K</div>
+    </div>
+    <div class="kpi exp">
+      <div class="ic"><svg class="i" viewBox="0 0 24 24"><path d="M7 7 17 17M17 17V8M17 17H8"/></svg></div>
+      <div class="label">Расходы</div>
+      <div class="v num">₽ 1 240K</div>
+    </div>
+  </div>
+
+  <!-- Распределение + DONUT -->
+  <div class="section-title">Распределение</div>
+  <div class="card">
+    <div class="card-head">
+      <h2>Распределение выручки</h2>
+      <span class="pill">Июнь 2026</span>
+    </div>
+    <div class="donut-sub">от выручки <b class="num">₽ 2 840 000</b> · сумма долей = 100%</div>
+    <div class="donut-wrap">
+      <div class="donut" role="img"
+           aria-label="Распределение выручки 2 840 000 ₽: Расходы 44%, Прибыль 35%, Фонд Кредиты 10%, Налоги 6%, Фонд Благодарность 5%. Сумма долей 100%.">
+        <svg width="148" height="148" viewBox="0 0 148 148">
+          <circle cx="74" cy="74" r="60" fill="none" stroke="var(--c-track)" stroke-width="22"/>
+          <!-- C = 2π·60 = 376.991 ; целое = Выручка ; доли: 43.66/35.34/10/6/5 % ; крупнейшая на 12 ч -->
+          <circle cx="74" cy="74" r="60" fill="none" stroke="var(--c-expense)" stroke-width="22"
+                  stroke-dasharray="164.60 212.39" stroke-dashoffset="0"/>
+          <circle cx="74" cy="74" r="60" fill="none" stroke="var(--c-profit)" stroke-width="22"
+                  stroke-dasharray="133.21 243.78" stroke-dashoffset="-164.60"/>
+          <circle cx="74" cy="74" r="60" fill="none" stroke="var(--c-cred)" stroke-width="22"
+                  stroke-dasharray="37.70 339.29" stroke-dashoffset="-297.82"/>
+          <circle cx="74" cy="74" r="60" fill="none" stroke="var(--c-tax)" stroke-width="22"
+                  stroke-dasharray="22.62 354.37" stroke-dashoffset="-335.52"/>
+          <circle cx="74" cy="74" r="60" fill="none" stroke="var(--c-grat)" stroke-width="22"
+                  stroke-dasharray="18.85 358.14" stroke-dashoffset="-358.14"/>
+        </svg>
+        <div class="center">
+          <div class="cap">ПРИБЫЛЬ</div>
+          <div class="pct num">35%</div>
+        </div>
+      </div>
+      <!-- Легенда = a11y-fallback (таблица данных), порядок = по убыванию доли -->
+      <div class="legend">
+        <div class="leg"><span class="dot" style="background:var(--c-expense)"></span><span class="nm">Расходы</span><span class="amt num">1 240K</span><span class="pc num">44%</span></div>
+        <div class="leg"><span class="dot" style="background:var(--c-profit)"></span><span class="nm">Прибыль</span><span class="amt num">1 004K</span><span class="pc num">35%</span></div>
+        <div class="leg"><span class="dot" style="background:var(--c-cred)"></span><span class="nm">Фонд «Кредиты»</span><span class="amt num">284K</span><span class="pc num">10%</span></div>
+        <div class="leg"><span class="dot" style="background:var(--c-tax)"></span><span class="nm">Налоги</span><span class="amt num">170K</span><span class="pc num">6%</span></div>
+        <div class="leg"><span class="dot" style="background:var(--c-grat)"></span><span class="nm">Фонд «Благодарность»</span><span class="amt num">142K</span><span class="pc num">5%</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Последние операции -->
+  <div class="section-title" style="display:flex;justify-content:space-between;align-items:center">
+    <span>Последние операции</span><a class="link" href="#">Все →</a>
+  </div>
+  <div class="card ops">
+    <div class="op">
+      <div class="oic"><svg class="i" viewBox="0 0 24 24"><path d="M3 7h18M3 12h18M3 17h12"/></svg></div>
+      <div class="meta"><div class="t">Оплата от клиента #142</div><div class="s">Курс ДПО · 8 июн</div></div>
+      <div class="sum p num">+480K</div>
+    </div>
+    <div class="op">
+      <div class="oic"><svg class="i" viewBox="0 0 24 24"><path d="M12 3v18M5 10l7-7 7 7"/></svg></div>
+      <div class="meta"><div class="t">Аренда оборудования</div><div class="s">Услуги · 6 июн</div></div>
+      <div class="sum n num">−95K</div>
+    </div>
+    <div class="op">
+      <div class="oic"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9 10h6"/></svg></div>
+      <div class="meta"><div class="t">Фонд «Благодарность»</div><div class="s">Распределение · 5 июн</div></div>
+      <div class="sum n num">−40K</div>
+    </div>
+  </div>
+
+  <!-- Нижняя навигация -->
+  <nav class="nav">
+    <a class="active" href="#"><span class="nic"><svg class="i" viewBox="0 0 24 24"><path d="M3 10l9-7 9 7v9a2 2 0 0 1-2 2h-4v-6H9v6H5a2 2 0 0 1-2-2z"/></svg></span>Главная</a>
+    <a href="#"><svg class="i" viewBox="0 0 24 24"><path d="M4 19V5M4 19h16M8 16v-5M13 16V8M18 16v-7"/></svg>Отчёты</a>
+    <a href="#"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h4"/></svg>Счета</a>
+    <a href="#"><svg class="i" viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-5.3A8 8 0 1 1 21 12z"/></svg>Чат</a>
+  </nav>
+</div>
+</body>
+</html>
