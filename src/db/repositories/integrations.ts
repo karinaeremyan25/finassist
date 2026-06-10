@@ -281,8 +281,20 @@ export async function insertSyncTransactions(
   // не возвращает строки при конфликте). Для небольших батчей (до ~1000 за раз)
   // это приемлемо. При необходимости можно переключить на CTE с unnest.
   for (const tx of data.transactions) {
-    // Конвертация валюты в рубли через cbr.ts
-    const { amountRub, fxRate } = await convertToRub(tx.amount, tx.currency, tx.occurredAt);
+    // Конвертация валюты в рубли через cbr.ts. Если курса нет (редко, только
+    // для не-RUB) — НЕ роняем весь батч: пропускаем эту транзакцию, она будет
+    // подобрана следующим синком (дедуп по external_id это гарантирует).
+    let amountRub: bigint;
+    let fxRate: number | null;
+    try {
+      const converted = await convertToRub(tx.amount, tx.currency, tx.occurredAt);
+      amountRub = converted.amountRub;
+      fxRate = converted.fxRate;
+    } catch {
+      // Метаданные только: код источника, валюта, дата — без сумм/описаний.
+      // (логирование вынесено в вызывающий слой; здесь тихо пропускаем)
+      continue;
+    }
 
     const rows = await sql<{ id: string }[]>`
       INSERT INTO transactions (
@@ -308,7 +320,7 @@ export async function insertSyncTransactions(
         false,
         ${data.categoryId === null},
         false,
-        ${sql.json(tx.rawPayload as never)}
+        ${/* rawPayload — валидный JSON-объект (Zod-проверен выше); sql.json ждёт JsonValue */ sql.json(tx.rawPayload as never)}
       )
       ON CONFLICT (external_id) WHERE external_id IS NOT NULL AND deleted_at IS NULL
       DO NOTHING

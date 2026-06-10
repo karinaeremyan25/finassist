@@ -91,9 +91,31 @@ export async function serveStatic(
   // Абсолютный путь к директории статики
   const rootResolved = path.resolve(staticDir);
 
-  // Нормализуем запрошенный путь
-  // Убираем query-string (её нет в urlPath после парсинга URL, но на всякий случай)
-  const decodedPath = decodeURIComponent(urlPath);
+  // Декодируем процент-кодирование. Malformed-последовательности (одиночный %)
+  // → 400, чтобы не пробрасывать исключение в общий обработчик как 500.
+  let decodedPath: string;
+  try {
+    decodedPath = decodeURIComponent(urlPath);
+  } catch {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: { code: 'bad_request', message: 'Bad path' } }));
+    return true;
+  }
+
+  // ── PATH TRAVERSAL PROTECTION (defense-in-depth, до касания ФС) ──────────
+  // Отвергаем null-byte и любой сегмент '..' ПОСЛЕ декодирования
+  // (ловит %2e%2e%2f, обратные слэши и т.п.). Финальная проверка containment
+  // ниже — основной backstop, эта — ранний отказ.
+  const normalizedSlashes = decodedPath.replace(/\\/g, '/');
+  if (
+    decodedPath.includes('\0') ||
+    normalizedSlashes.split('/').some((seg) => seg === '..')
+  ) {
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: { code: 'forbidden', message: 'Forbidden' } }));
+    return true;
+  }
+
   // Обрабатываем корневой путь и пути без расширения как index.html запрос
   const fileSuffix = decodedPath === '/' ? 'index.html' : decodedPath.replace(/^\//, '');
 

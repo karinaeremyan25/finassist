@@ -8,7 +8,17 @@ export const logger = pino({
     ? { target: 'pino-pretty', options: { colorize: true, translateTime: 'SYS:standard' } }
     : undefined,
   redact: {
-    paths: ['msg', '*.raw_input', '*.audio_base64'],
+    // Никогда не логируем: текст транзакций/голос + любые credentials/токены,
+    // если случайно попадут в лог-объект (Authorization-заголовки, ключи).
+    paths: [
+      'msg',
+      '*.raw_input',
+      '*.audio_base64',
+      '*.headers.authorization',
+      '*.headers.Authorization',
+      '*.config.headers.authorization',
+      'authorization',
+    ],
     remove: false,
     censor: '[REDACTED]',
   },

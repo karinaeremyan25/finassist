@@ -59,6 +59,18 @@ Vite warning: чанк `index.js` ~560 KB (recharts тяжёлый). На моб
 
 ---
 
+## TD-6. `source_type` для robokassa/tochka семантически некорректен
+
+> **Severity:** minor (семантика схемы) · **Оценка:** 30 мин · **Файлы:** `db/migrations/001_init.sql` (CHECK `source_type`), `db/migrations/002_seed.sql:83-84`
+
+В seed строки `robokassa` и `tochka` вставлены с `source_type='prodamus'` (CHECK не содержит их собственных значений). Сейчас **функционально работает** — интеграции резолвят источник по `code`, не по `source_type`. Но семантически неверно и мешает фильтрации по типу.
+
+**Решение:** миграция `006_source_types.sql` — добавить `'robokassa'`,`'tochka'` в CHECK-ограничение `sources.source_type` (DROP/ADD CONSTRAINT) и `UPDATE sources SET source_type=code WHERE code IN ('robokassa','tochka')`.
+
+**Критерий:** `source_type` соответствует реальному типу источника; ничего не падает.
+
+---
+
 ## TD-5. Healthcheck-пинг для HTTP-сервера
 
 > **Severity:** trivial · **Оценка:** 20 мин
@@ -77,5 +89,6 @@ Vite warning: чанк `index.js` ~560 KB (recharts тяжёлый). На моб
 | TD-3 | Конфиг ESLint | minor | 1–2 ч |
 | TD-4 | Code-splitting / SVG-донат | trivial | 30 мин |
 | TD-5 | Healthcheck HTTP-сервера | trivial | 20 мин |
+| TD-6 | `source_type` для robokassa/tochka | minor | 30 мин |
 
 > Связанные крупные задачи вынесены в отдельные спеки: [feature-spec-integrations-sync.md](feature-spec-integrations-sync.md), [feature-spec-bot-miniapp-launch.md](feature-spec-bot-miniapp-launch.md), [feature-spec-webapp-serving-deploy.md](feature-spec-webapp-serving-deploy.md).

@@ -150,6 +150,7 @@ export async function syncSource(
 
   let fetched = 0;
   let inserted = 0;
+  let finished = false; // защита от «зависшей» записи 'running'
 
   try {
     // 4. Определяем since-дату
@@ -168,6 +169,7 @@ export async function syncSource(
 
     // 6. Успех
     await finishSyncRun(syncRunId, { status: 'ok', fetched, inserted });
+    finished = true;
 
     log.info(
       { source: code, fetched, inserted, latency_ms: Date.now() - startMs },
@@ -188,6 +190,7 @@ export async function syncSource(
         // errorMessage — ТОЛЬКО метаданные, без ключей
         errorMessage: `credentials_invalid source=${code}`,
       });
+      finished = true;
 
       log.error(
         { source: code, latency_ms: latencyMs },
@@ -214,6 +217,7 @@ export async function syncSource(
         inserted: 0,
         errorMessage: `source=${code} ${safeMessage}`,
       });
+      finished = true;
 
       log.error(
         { source: code, latency_ms: latencyMs, error_type: err instanceof Error ? err.name : 'unknown' },
@@ -225,6 +229,20 @@ export async function syncSource(
           log.error({ err: alertErr, source: code }, 'sync_alert_send_failed');
         });
       }
+    }
+  } finally {
+    // Если ни одна ветка не закрыла запись (например, сам finishSyncRun/disableSource
+    // упал на ошибке БД) — best-effort помечаем 'error', чтобы запись не зависла
+    // в статусе 'running' и не блокировала будущие синки (isSourceSyncRunning).
+    if (!finished) {
+      await finishSyncRun(syncRunId, {
+        status: 'error',
+        fetched,
+        inserted,
+        errorMessage: `source=${code} unfinished`,
+      }).catch((finErr) => {
+        log.error({ err: finErr, source: code, sync_run_id: syncRunId }, 'sync_finish_guard_failed');
+      });
     }
   }
 }

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { config } from '../../config.js';
 import { childLogger } from '../../utils/logger.js';
+import { toKopecks } from '../../utils/money.js';
 import type { SourceSyncer, SyncResult, RawSourceTransaction } from './types.js';
 import { insertSyncTransactions } from '../../db/repositories/integrations.js';
 import { getAllActiveUsers } from '../../db/repositories/users.js';
@@ -370,11 +371,14 @@ async function fetchCurrentAccounts(
 
 // ── Загрузка транзакций ───────────────────────────────────────────────────
 
-/** "1500.50" → 150050n */
+/** "1500.50" → 150050n. Конвертация — через utils/money.ts (money.md). */
 function parseRubToKopecks(raw: string): bigint {
-  const num = parseFloat(raw.replace(',', '.'));
-  if (!Number.isFinite(num) || num <= 0) return 0n;
-  return BigInt(Math.round(num * 100));
+  try {
+    const kopecks = toKopecks(raw);
+    return kopecks > 0n ? kopecks : 0n;
+  } catch {
+    return 0n;
+  }
 }
 
 /** ISO datetime → YYYY-MM-DD */
