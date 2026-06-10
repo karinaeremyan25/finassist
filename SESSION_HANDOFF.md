@@ -53,10 +53,17 @@
 - ✅ **`src/services/miniAppAi.ts`** — AI-наставник на `claude-opus-4-8` (`config.AI_MENTOR_MODEL`, temp 0.4). `callClaude` обратносовместимо расширен опциональными `model`/`temperature`.
 - ✅ **`src/app/webapp/`** — фронтенд Mini App (изолированный Vite+React+TS+Tailwind пакет, свой `package.json`/`node_modules`). Экраны: Dashboard (с donut по §6), Transactions, Users, Settings, Chat (AIChatWidget). Состояния Loading/Empty/Error/Partial. `npm run build` — чисто.
 - ✅ Миграции `004_add_last_seen.sql`, `005_sync_audit.sql` (таблица `sync_runs` + `sources.sync_enabled`).
-- ✅ **`src/services/integrations/`** (robokassa/prodamus/tochka/sync/types) + `src/db/repositories/integrations.ts` — синхронизация источников: cron `*/30`, дедуп по `external_id`, audit `sync_runs`, авто-отключение источника при невалидных credentials, алерты. ⚠️ API-эндпоинты источников помечены `// ASSUMPTION:` — **сверить с реальной докой Robokassa/Prodamus/Tochka** перед включением.
-- ✅ **`src/bot/handlers/miniApp.ts`** — команда `/app` + web_app-кнопка; `setChatMenuButton` при старте; web_app-кнопка в `/start`.
-- ✅ **`src/server/static.ts`** — раздача собранного `webapp/dist` из node:http (защита от path traversal — проверена тестом), SPA-fallback.
-- ⏳ Осталось: задеплоить (HTTPS/nginx/PM2 — [feature-spec-webapp-serving-deploy.md](feature-spec-webapp-serving-deploy.md)), заполнить credentials источников в `.env`, сверить ASSUMPTION-эндпоинты, применить миграции 004/005 на БД.
+- ✅ **`src/services/integrations/`** (по РЕАЛЬНЫМ API, research официальной документации):
+  - **Tochka** (`tochka.ts`) — pull: OAuth `client_credentials` → `enter.tochka.com/connect/token`, Open Banking statement flow (init → poll → Ready), cron `*/30`.
+  - **Robokassa** (`robokassa.ts`) — push: webhook `POST /api/webhooks/robokassa`, проверка подписи `MD5(OutSum:InvId:Пароль#2[:Shp_*])`, ответ `OK{InvId}`.
+  - **Prodamus** (`prodamus.ts`) — push: webhook `POST /api/webhooks/prodamus`, подпись `HMAC-SHA256` (заголовок `Sign`, PHP-совместимая сериализация).
+  - Проверки подписи покрыты smoke-тестом (MD5 + HMAC). ⚠️ Остаточные `ASSUMPTION` (имена полей выписки Точки, точность сериализации Prodamus) — сверить на ПЕРВОМ реальном платеже (см. `feature-spec-integrations-sync.md`).
+- ✅ **`src/bot/handlers/miniApp.ts`** — `/app` + web_app-кнопка; `setChatMenuButton`; кнопка в `/start`.
+- ✅ **`src/server/static.ts`** — раздача `webapp/dist` (path traversal проверен тестом), SPA-fallback.
+- ✅ **Миграции 004/005 ПРИМЕНЕНЫ на реальной БД** (`npm run migrate` — раннер с трекингом `schema_migrations` + baseline-детект). Проверено: `sync_runs`, `sources.sync_enabled`, `app_users.last_seen`, `moddatetime` в `extensions`.
+- ✅ **Деплой-автоматизация** (`deploy/`): `nginx.conf`, `deploy.sh`, `setup-server.sh`, `README.md`; `ecosystem.config.js` (PM2 `--env-file`).
+- ✅ **`SETUP.md`** + `npm run preflight` (`scripts/check-env.mjs`) — чек-лист «под ключ» для оставшихся ручных шагов.
+- ⏳ Осталось РУКАМИ (нужны секреты/доступы — см. [SETUP.md](SETUP.md)): заполнить `.env` (WEBAPP_URL + ключи платёжек), зарегистрировать Menu Button у @BotFather, развернуть на VPS (`deploy/README.md`), прописать webhook-URL в кабинетах Robokassa/Prodamus, сверить подписи на первом платеже.
 
 ### Сборка / проверки
 - `npx tsc --noEmit` (корень) — **0 ошибок** (webapp исключён из корневого `tsconfig`, у него свой).
