@@ -12,7 +12,17 @@ export interface ApiRequest {
   method: string;
   path: string;
   query: Record<string, string>;
+  /**
+   * Для JSON-запросов — распарсенный объект.
+   * Для urlencoded-запросов — реконструированный объект (включая вложенные products[]).
+   * Для прочих Content-Type — undefined.
+   */
   body: unknown;
+  /**
+   * Сырая строка тела запроса.
+   * Доступна для JSON и urlencoded (нужна для диагностики и проверки подписей).
+   */
+  rawBody: string | undefined;
   rawReq: http.IncomingMessage;
 }
 
@@ -20,7 +30,19 @@ export type ApiHandler = (req: ApiRequest) => Promise<ApiResponse>;
 
 export interface ApiResponse {
   status: number;
+  /**
+   * Для JSON-ответов: любой сериализуемый объект.
+   * Если задан rawBody — body игнорируется.
+   */
   body: unknown;
+  /**
+   * Если задано — отправляется как есть вместо JSON.stringify(body).
+   */
+  rawBody?: string;
+  /**
+   * Content-Type ответа. По умолчанию 'application/json'.
+   */
+  contentType?: string;
 }
 
 export interface RouteEntry {
@@ -55,7 +77,6 @@ function setCorsHeaders(
   allowedOrigins: string[]
 ): void {
   if (allowedOrigins.length === 0) {
-    // Same-origin: do not emit any CORS header
     return;
   }
 
@@ -69,22 +90,86 @@ function setCorsHeaders(
   }
 }
 
+// ── Form key parser (nested urlencoded) ───────────────────────────────────
+
+/**
+ * Реконструирует вложенный объект из плоских urlencoded-ключей.
+ *
+ * Примеры:
+ *   products[0][name] → { products: [{ name: ... }] }
+ *   Shp_field         → { Shp_field: ... }
+ *
+ * Используется для Prodamus webhook, где products — вложенный массив.
+ */
+export function parseNestedFormFields(
+  params: URLSearchParams
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+
+  params.forEach((value, key) => {
+    // Проверяем паттерн key[index][field] или key[field]
+    const arrayMatch = /^([^\[]+)\[(\d+)\]\[([^\]]+)\]$/.exec(key);
+    if (arrayMatch !== null) {
+      const [, parentKey, indexStr, fieldKey] = arrayMatch;
+      const index = parseInt(indexStr!, 10);
+
+      if (!(parentKey! in result)) {
+        result[parentKey!] = [];
+      }
+      const arr = result[parentKey!] as Record<string, unknown>[];
+      // Заполняем недостающие слоты
+      while (arr.length <= index) {
+        arr.push({});
+      }
+      arr[index]![fieldKey!] = value;
+      return;
+    }
+
+    // Простой key[field] (без индекса)
+    const objMatch = /^([^\[]+)\[([^\]]+)\]$/.exec(key);
+    if (objMatch !== null) {
+      const [, parentKey, fieldKey] = objMatch;
+      if (!(parentKey! in result)) {
+        result[parentKey!] = {};
+      }
+      (result[parentKey!] as Record<string, unknown>)[fieldKey!] = value;
+      return;
+    }
+
+    // Плоский ключ
+    result[key] = value;
+  });
+
+  return result;
+}
+
 // ── Body reader ────────────────────────────────────────────────────────────
 
 /** Класс ошибки «тело слишком большое» (→ HTTP 413). */
 class PayloadTooLargeError extends Error {}
 
-/** Максимальный размер JSON-тела запроса (256 KB) — защита от OOM/DoS. */
+/** Максимальный размер тела запроса (256 KB) — защита от OOM/DoS. */
 const MAX_BODY_BYTES = 256 * 1024;
 
-async function readBody(req: http.IncomingMessage): Promise<unknown> {
+interface ReadBodyResult {
+  body: unknown;
+  rawBody: string | undefined;
+}
+
+async function readBody(req: http.IncomingMessage): Promise<ReadBodyResult> {
   const contentType = req.headers['content-type'] ?? '';
-  if (!contentType.includes('application/json')) {
-    return undefined;
+
+  const isJson = contentType.includes('application/json');
+  const isUrlEncoded = contentType.includes('application/x-www-form-urlencoded');
+
+  if (!isJson && !isUrlEncoded) {
+    return { body: undefined, rawBody: undefined };
   }
-  return new Promise<unknown>((resolve, reject) => {
+
+  return new Promise<ReadBodyResult>((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
+
     req.on('data', (chunk: Buffer) => {
       size += chunk.length;
       if (size > MAX_BODY_BYTES) {
@@ -94,18 +179,39 @@ async function readBody(req: http.IncomingMessage): Promise<unknown> {
       }
       chunks.push(chunk);
     });
+
     req.on('end', () => {
-      const raw = Buffer.concat(chunks).toString('utf-8');
-      if (raw.length === 0) {
-        resolve(undefined);
+      const rawStr = Buffer.concat(chunks).toString('utf-8');
+
+      if (rawStr.length === 0) {
+        resolve({ body: undefined, rawBody: undefined });
         return;
       }
-      try {
-        resolve(JSON.parse(raw) as unknown);
-      } catch {
-        resolve(undefined);
+
+      if (isJson) {
+        try {
+          resolve({ body: JSON.parse(rawStr) as unknown, rawBody: rawStr });
+        } catch {
+          resolve({ body: undefined, rawBody: rawStr });
+        }
+        return;
       }
+
+      // application/x-www-form-urlencoded
+      if (isUrlEncoded) {
+        try {
+          const params = new URLSearchParams(rawStr);
+          const nested = parseNestedFormFields(params);
+          resolve({ body: nested, rawBody: rawStr });
+        } catch {
+          resolve({ body: undefined, rawBody: rawStr });
+        }
+        return;
+      }
+
+      resolve({ body: undefined, rawBody: undefined });
     });
+
     req.on('error', reject);
   });
 }
@@ -148,11 +254,9 @@ export function createHttpServer(router: Router): http.Server {
     const rawUrl = req.url ?? '/';
     const method = req.method ?? 'GET';
 
-    // Parse URL with a dummy base so URL constructor works with relative paths
     const parsed = new URL(rawUrl, 'http://localhost');
     const pathname = parsed.pathname;
 
-    // Pre-flight CORS
     setCorsHeaders(req, res, allowedOrigins);
     if (method === 'OPTIONS') {
       res.writeHead(204);
@@ -168,9 +272,7 @@ export function createHttpServer(router: Router): http.Server {
       return;
     }
 
-    // ── Static file serving (Вариант B) ──────────────────────────────────
-    // Обрабатываем только GET-запросы не начинающиеся с /api.
-    // /api/* маршруты продолжают обрабатываться через router ниже.
+    // ── Static file serving ───────────────────────────────────────────────
     if (method === 'GET' && !pathname.startsWith('/api')) {
       try {
         const handled = await serveStatic(req, res, pathname, config.WEBAPP_STATIC_DIR);
@@ -198,8 +300,11 @@ export function createHttpServer(router: Router): http.Server {
     });
 
     let body: unknown;
+    let rawBody: string | undefined;
     try {
-      body = await readBody(req);
+      const result = await readBody(req);
+      body = result.body;
+      rawBody = result.rawBody;
     } catch (err) {
       if (err instanceof PayloadTooLargeError) {
         res.writeHead(413, { 'Content-Type': 'application/json' });
@@ -211,20 +316,23 @@ export function createHttpServer(router: Router): http.Server {
       return;
     }
 
-    const apiReq: ApiRequest = { method, path: pathname, query, body, rawReq: req };
+    const apiReq: ApiRequest = { method, path: pathname, query, body, rawBody, rawReq: req };
 
     try {
       const apiRes = await handler(apiReq);
-      res.writeHead(apiRes.status, { 'Content-Type': 'application/json' });
-      res.end(jsonStringify(apiRes.body));
+
+      // Поддержка raw text ответов (для webhook-приёмников Robokassa/Prodamus)
+      if (apiRes.rawBody !== undefined) {
+        const ct = apiRes.contentType ?? 'text/plain; charset=utf-8';
+        res.writeHead(apiRes.status, { 'Content-Type': ct });
+        res.end(apiRes.rawBody);
+      } else {
+        res.writeHead(apiRes.status, { 'Content-Type': 'application/json' });
+        res.end(jsonStringify(apiRes.body));
+      }
 
       log.info(
-        {
-          handler: pathname,
-          method,
-          status: apiRes.status,
-          latency_ms: Date.now() - start,
-        },
+        { handler: pathname, method, status: apiRes.status, latency_ms: Date.now() - start },
         'http_request'
       );
     } catch (err) {
@@ -233,11 +341,7 @@ export function createHttpServer(router: Router): http.Server {
         'http_handler_error'
       );
       res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(
-        jsonStringify({
-          error: { code: 'internal_error', message: 'Внутренняя ошибка сервера' },
-        })
-      );
+      res.end(jsonStringify({ error: { code: 'internal_error', message: 'Внутренняя ошибка сервера' } }));
     }
   });
 

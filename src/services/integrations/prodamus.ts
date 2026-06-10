@@ -1,8 +1,9 @@
+import crypto from 'crypto';
 import { z } from 'zod';
 import { config } from '../../config.js';
 import { childLogger } from '../../utils/logger.js';
 import { toKopecks } from '../../utils/money.js';
-import type { SourceSyncer, SyncResult, RawSourceTransaction } from './types.js';
+import type { RawSourceTransaction } from './types.js';
 import {
   insertSyncTransactions,
   getActiveProdamusMappings,
@@ -12,104 +13,150 @@ import { getAllActiveUsers } from '../../db/repositories/users.js';
 import { sql } from '../../db/client.js';
 
 /**
- * Prodamus REST API синхронизатор.
+ * Prodamus — webhook-приёмник (push модель).
  *
- * Переиспользует логику маппинга продукт → направление из
- * db/repositories/integrations.ts (prodamus_product_mapping), аналогично
- * services/parser/prodamus-csv.ts.
+ * Prodamus НЕ имеет API "список заказов за период" (в публичном REST).
+ * Продамус POST'ит уведомления на URL, заданный в настройках.
  *
- * ────────── ASSUMPTIONS (требуют сверки с реальной документацией) ──────────
+ * Настройка в личном кабинете Prodamus:
+ *   Настройки → Уведомления → URL вебхука =
+ *   https://<домен>/api/webhooks/prodamus
  *
- * ASSUMPTION 1: endpoint
- *   Базовый URL: https://payform.ru/api
- *   Метод: GET /orders  (или /payments — уточнить в личном кабинете Продамуса)
- *   Документация: https://docs.payform.ru/api/
- *   Пример: https://payform.ru/api/orders?date_from=2024-01-01&date_to=2024-01-31
+ * ── Алгоритм проверки подписи (Prodamus HMAC, PHP-совместимый) ────────
  *
- * ASSUMPTION 2: auth-схема
- *   Bearer-токен (API-ключ) в заголовке: Authorization: Bearer <PRODAMUS_API_KEY>
- *   PRODAMUS_API_KEY берётся из config.ts (env PRODAMUS_API_KEY).
+ * 1. Взять все POST-поля (включая вложенные products[i][...]).
+ * 2. РЕКУРСИВНО отсортировать по ключам.
+ * 3. Все значения привести к строкам.
+ * 4. JSON.stringify результирующего объекта.
+ * 5. Экранировать прямые слэши: "/" → "\/" (как PHP json_encode по умолчанию).
+ * 6. HMAC-SHA256(jsonString, secretKey) hex.
+ * 7. Сравнить с заголовком Sign (hex, case-insensitive).
  *
- * ASSUMPTION 3: формат ответа (JSON)
- *   { data: OrderItem[], total: number, page: number, per_page: number }
- *   OrderItem: {
- *     id: string,            — уникальный идентификатор заказа
- *     date: string,          — "YYYY-MM-DD HH:mm:ss" или ISO
- *     sum: string,           — сумма в рублях ("1500.00")
- *     currency: string,      — "RUB" (или другая)
- *     status: string,        — "paid" | "pending" | "failed" | ...
- *     product_name: string,  — наименование товара/курса
- *     payment_id: string,    — внешний id платёжной системы
- *   }
+ * ⚠️ ВАЖНО: сверить на реальном вебхуке Prodamus — PHP json_encode
+ * может иметь особенности (unicode escape, пробелы), которые здесь
+ * воспроизведены максимально точно, но требуют тестирования.
  *
- * ASSUMPTION 4: пагинация
- *   Параметры: page (начиная с 1), per_page (по умолчанию 100).
- *   Продолжаем пагинацию пока data.length === per_page.
+ * Входные поля (form-urlencoded, вложенные как products[0][name]):
+ *   order_id / order_num — идентификатор заказа
+ *   sum                  — сумма в рублях ("1500.00")
+ *   currency             — валюта (по умолч. "rub")
+ *   date                 — дата ("YYYY-MM-DD HH:mm:ss" или ISO)
+ *   payment_status       — "success" для успешных
+ *   products[]           — массив товаров (name, price, quantity, sum)
+ *   customer_email       — email покупателя (опционально)
+ *   customer_phone       — телефон покупателя (опционально)
  *
- * ASSUMPTION 5: фильтрация по дате
- *   Параметры: date_from, date_to (YYYY-MM-DD).
- *   Статус: только status='paid' (успешные платежи).
+ * Секрет: PRODAMUS_SECRET_KEY из env (отдельный от PRODAMUS_API_KEY).
  *
- * ASSUMPTION 6: суммы
- *   sum — строка в рублях ("1500.00"). Конвертируем в копейки через round(sum * 100).
- *
- * ASSUMPTION 7: маппинг продукт → направление/юрлицо
- *   Используем prodamus_product_mapping (те же правила, что у CSV-импорта).
- *   Если product_name не совпал ни с одним правилом — entity из источника в БД,
- *   direction=null, needs_classification=true.
- * ──────────────────────────────────────────────────────────────────────────
+ * Ответ при успехе: HTTP 200 text/plain "success".
+ * Ответ при ошибке подписи: HTTP 400.
  */
 
-const log = childLogger({ handler: 'sync:prodamus' });
+const log = childLogger({ handler: 'webhook:prodamus' });
 
-// ── Константы ────────────────────────────────────────────────────────────
+// ── Zod-схема продукта Prodamus ───────────────────────────────────────────
 
-// ASSUMPTION 1: базовый URL Prodamus API
-const PRODAMUS_BASE_URL = 'https://payform.ru/api';
-const PRODAMUS_ORDERS_PATH = '/orders';
+const ProdamusProductSchema = z.object({
+  name: z.string().default(''),
+  price: z.union([z.string(), z.number()]).transform(String).optional(),
+  quantity: z.union([z.string(), z.number()]).transform(String).optional(),
+  sum: z.union([z.string(), z.number()]).transform(String).optional(),
+}).passthrough();
 
-const HTTP_TIMEOUT_MS = 30_000;
-const PER_PAGE = 100;
-// ASSUMPTION 3: статус успешного платежа
-const SUCCESS_STATUSES = new Set(['paid', 'complete', 'success']);
+// ── Zod-схема входящего webhook payload ──────────────────────────────────
 
-// ── Zod-схема ответа ──────────────────────────────────────────────────────
-
-const ProdamusOrderSchema = z.object({
-  id: z.union([z.string(), z.number()]).transform(String),
-  date: z.string(),
+export const ProdamusWebhookSchema = z.object({
+  order_id: z.union([z.string(), z.number()]).transform(String).optional(),
+  order_num: z.union([z.string(), z.number()]).transform(String).optional(),
   sum: z.string(),
-  currency: z.string().default('RUB'),
-  status: z.string(),
-  product_name: z.string().default(''),
-  // ASSUMPTION 3: payment_id может отсутствовать
-  payment_id: z.union([z.string(), z.number()]).transform(String).optional(),
-});
+  currency: z.string().default('rub'),
+  date: z.string(),
+  payment_status: z.string(),
+  products: z.array(ProdamusProductSchema).default([]),
+  customer_email: z.string().optional(),
+  customer_phone: z.string().optional(),
+}).passthrough();
 
-const ProdamusResponseSchema = z.object({
-  data: z.array(ProdamusOrderSchema),
-  total: z.number().optional(),
-  page: z.number().optional(),
-  per_page: z.number().optional(),
-});
+export type ProdamusWebhookPayload = z.infer<typeof ProdamusWebhookSchema>;
+
+// ── Результат обработки webhook ───────────────────────────────────────────
+
+export interface WebhookResult {
+  ok: boolean;
+  responseBody: string;
+  status: number;
+}
+
+// ── HMAC подпись (PHP-совместимая) ────────────────────────────────────────
+
+/**
+ * Рекурсивно сортирует объект/массив по ключам (как PHP ksort).
+ * Все листовые значения приводятся к строкам (как PHP строковые поля формы).
+ */
+function sortedDeep(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    // Массивы: рекурсивно обрабатываем элементы, ключи числовые — сортировать не нужно
+    // (PHP ksort числового массива оставляет порядок как есть по числовому индексу)
+    return value.map(sortedDeep);
+  }
+  if (value !== null && typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    const sorted: Record<string, unknown> = {};
+    for (const key of Object.keys(obj).sort()) {
+      sorted[key] = sortedDeep(obj[key]);
+    }
+    return sorted;
+  }
+  // Листовые значения → строки (как PHP form fields)
+  return String(value ?? '');
+}
+
+/**
+ * Сериализует объект в JSON с экранированием слэшей (как PHP json_encode).
+ * PHP по умолчанию экранирует "/" → "\/".
+ *
+ * ⚠️ ВАЖНО: сверить на реальном вебхуке Prodamus.
+ */
+function phpCompatibleJsonStringify(value: unknown): string {
+  const json = JSON.stringify(value);
+  if (json === undefined) return '{}';
+  // PHP json_encode экранирует прямые слэши / → \/
+  return json.replace(/\//g, '\\/');
+}
+
+/**
+ * Вычисляет HMAC-SHA256 подпись в стиле Prodamus PHP SDK.
+ *
+ * ⚠️ ВАЖНО: сверить на реальном вебхуке Prodamus — реализовано по PHP-референсу,
+ * но без тестирования на живом потоке. Возможны отличия в unicode-escape PHP.
+ */
+export function computeProdamusSignature(
+  fields: Record<string, unknown>,
+  secretKey: string
+): string {
+  const sorted = sortedDeep(fields);
+  const jsonStr = phpCompatibleJsonStringify(sorted);
+  return crypto.createHmac('sha256', secretKey).update(jsonStr, 'utf8').digest('hex');
+}
+
+/**
+ * Проверяет подпись Prodamus из заголовка Sign.
+ */
+export function verifyProdamusSignature(
+  fields: Record<string, unknown>,
+  signHeader: string,
+  secretKey: string
+): boolean {
+  const expected = computeProdamusSignature(fields, secretKey);
+  return expected.toLowerCase() === signHeader.toLowerCase();
+}
 
 // ── Вспомогательные функции ───────────────────────────────────────────────
-
-/** "1500.50" → 150050n копеек. Конвертация — через utils/money.ts (money.md). */
-function parseRubToKopecks(raw: string): bigint {
-  try {
-    const kopecks = toKopecks(raw);
-    return kopecks > 0n ? kopecks : 0n;
-  } catch {
-    return 0n;
-  }
-}
 
 /** Нормализует дату Продамуса к YYYY-MM-DD. */
 function normalizeDate(raw: string): string {
   const isoMatch = /^(\d{4}-\d{2}-\d{2})/.exec(raw.trim());
   if (isoMatch) return isoMatch[1]!;
-  // DD.MM.YYYY
   const dmyMatch = /^(\d{2})\.(\d{2})\.(\d{4})/.exec(raw.trim());
   if (dmyMatch) {
     return `${dmyMatch[3]}-${dmyMatch[2]}-${dmyMatch[1]}`;
@@ -117,10 +164,7 @@ function normalizeDate(raw: string): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-/**
- * Маппинг product_name → {directionId, entityId, categoryId}.
- * Переиспользует правила из prodamus_product_mapping (как CSV-импорт).
- */
+/** Маппинг product_name → {directionId, entityId, categoryId}. */
 function applyProductMapping(
   productName: string,
   mappings: ProductMappingRow[]
@@ -146,206 +190,124 @@ function applyProductMapping(
   return { directionId: null, entityId: null, categoryId: null };
 }
 
-// ── CredentialsError ──────────────────────────────────────────────────────
+// ── Обработчик webhook ────────────────────────────────────────────────────
 
-export class CredentialsError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'CredentialsError';
+/**
+ * Обрабатывает входящий Prodamus webhook.
+ * @param rawFields — плоские поля из urlencoded тела (products уже реконструированы как массив)
+ * @param signHeader — значение заголовка Sign
+ */
+export async function handleProdamusWebhook(
+  rawFields: Record<string, unknown>,
+  signHeader: string
+): Promise<WebhookResult> {
+  const secretKey = config.PRODAMUS_SECRET_KEY;
+
+  if (!secretKey) {
+    log.warn({ source: 'prodamus' }, 'prodamus_webhook_secret_key_missing');
+    return { ok: false, status: 400, responseBody: 'bad sign' };
   }
-}
 
-// ── Запрос к API ─────────────────────────────────────────────────────────
+  // Проверка подписи
+  const signOk = verifyProdamusSignature(rawFields, signHeader, secretKey);
+  if (!signOk) {
+    log.warn(
+      { source: 'prodamus', signature_ok: false },
+      'prodamus_webhook_bad_signature'
+    );
+    return { ok: false, status: 400, responseBody: 'bad sign' };
+  }
 
-async function fetchPage(
-  apiKey: string,
-  dateFrom: string,
-  dateTo: string,
-  page: number
-): Promise<z.infer<typeof ProdamusResponseSchema>> {
-  const params = new URLSearchParams({
-    date_from: dateFrom,
-    date_to: dateTo,
-    status: 'paid',
-    page: String(page),
-    per_page: String(PER_PAGE),
+  log.info({ source: 'prodamus', signature_ok: true }, 'prodamus_webhook_signature_ok');
+
+  // Zod-валидация payload
+  const parsed = ProdamusWebhookSchema.safeParse(rawFields);
+  if (!parsed.success) {
+    log.warn({ source: 'prodamus', issues: parsed.error.issues.length }, 'prodamus_webhook_invalid_payload');
+    return { ok: false, status: 400, responseBody: 'bad sign' };
+  }
+
+  const payload = parsed.data;
+
+  // Только успешные платежи
+  if (payload.payment_status.toLowerCase() !== 'success') {
+    log.info({ source: 'prodamus', payment_status: payload.payment_status }, 'prodamus_webhook_not_success_skipped');
+    return { ok: true, status: 200, responseBody: 'success' };
+  }
+
+  // Сумма
+  let amount: bigint;
+  try {
+    amount = toKopecks(payload.sum);
+    if (amount <= 0n) throw new Error('non-positive amount');
+  } catch {
+    log.warn({ source: 'prodamus' }, 'prodamus_webhook_invalid_amount');
+    return { ok: false, status: 400, responseBody: 'bad sign' };
+  }
+
+  // external_id: order_num предпочтительнее order_id
+  const externalId = `prodamus_${payload.order_num ?? payload.order_id ?? Date.now()}`;
+  const occurredAt = normalizeDate(payload.date);
+
+  // Наименование из первого продукта (основной товар)
+  const firstProduct = payload.products[0];
+  const productName = firstProduct?.name ?? '';
+
+  // Маппинг через prodamus_product_mapping
+  const mappings = await getActiveProdamusMappings();
+  const mapping = applyProductMapping(productName, mappings);
+
+  // Валюта
+  const currency = payload.currency.toUpperCase() === 'RUB' ? 'RUB' : 'RUB'; // Prodamus обычно rub/RUB
+
+  const tx: RawSourceTransaction = {
+    externalId,
+    occurredAt,
+    amount,
+    currency,
+    description: productName || null,
+    rawPayload: {
+      orderId: payload.order_id ?? null,
+      orderNum: payload.order_num ?? null,
+      productsCount: payload.products.length,
+      productName,
+      directionId: mapping.directionId,
+      entityId: mapping.entityId,
+      categoryId: mapping.categoryId,
+      // НЕ включаем customer_email, customer_phone, sum
+    },
+  };
+
+  // entity_id из sources
+  const entityRows = await sql<{ entity_id: string | null }[]>`
+    SELECT entity_id FROM sources WHERE code = 'prodamus' LIMIT 1
+  `;
+  const defaultEntityId = entityRows[0]?.entity_id;
+  const entityId = mapping.entityId ?? defaultEntityId;
+
+  if (!entityId) {
+    log.warn({ source: 'prodamus' }, 'prodamus_webhook_entity_id_missing');
+    return { ok: false, status: 500, responseBody: 'bad sign' };
+  }
+
+  const users = await getAllActiveUsers();
+  const owner = users.find((u) => u.role === 'owner');
+  if (!owner) {
+    log.warn({ source: 'prodamus' }, 'prodamus_webhook_no_owner');
+    return { ok: false, status: 500, responseBody: 'bad sign' };
+  }
+
+  const inserted = await insertSyncTransactions({
+    sourceCode: 'prodamus',
+    transactions: [tx],
+    createdBy: owner.id,
+    entityId,
+    directionId: mapping.directionId,
+    categoryId: mapping.categoryId,
+    flowType: 'income',
   });
 
-  const url = `${PRODAMUS_BASE_URL}${PRODAMUS_ORDERS_PATH}?${params.toString()}`;
+  log.info({ source: 'prodamus', inserted, products_count: payload.products.length }, 'prodamus_webhook_processed');
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
-
-  let responseBody: string;
-  try {
-    const res = await fetch(url, {
-      method: 'GET',
-      headers: {
-        Accept: 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
-      signal: controller.signal,
-    });
-
-    if (res.status === 401 || res.status === 403) {
-      throw new CredentialsError(`Prodamus responded with HTTP ${res.status}`);
-    }
-    if (!res.ok) {
-      throw new Error(`Prodamus HTTP ${res.status}`);
-    }
-
-    responseBody = await res.text();
-  } finally {
-    clearTimeout(timer);
-  }
-
-  let json: unknown;
-  try {
-    json = JSON.parse(responseBody);
-  } catch {
-    throw new Error('Prodamus: failed to parse JSON response');
-  }
-
-  const parsed = ProdamusResponseSchema.safeParse(json);
-  if (!parsed.success) {
-    throw new Error(`Prodamus: unexpected response schema — ${parsed.error.message}`);
-  }
-
-  return parsed.data;
+  return { ok: true, status: 200, responseBody: 'success' };
 }
-
-async function fetchAllOrders(
-  apiKey: string,
-  sinceDate: string
-): Promise<RawSourceTransaction[]> {
-  const today = new Date().toISOString().slice(0, 10);
-  const mappings = await getActiveProdamusMappings();
-  const allTransactions: RawSourceTransaction[] = [];
-  let page = 1;
-
-  while (true) {
-    const response = await fetchPage(apiKey, sinceDate, today, page);
-
-    if (response.data.length === 0) break;
-
-    for (const order of response.data) {
-      if (!SUCCESS_STATUSES.has(order.status.toLowerCase())) continue;
-
-      const amount = parseRubToKopecks(order.sum);
-      if (amount <= 0n) continue;
-
-      const occurredAt = normalizeDate(order.date);
-      const productName = order.product_name;
-
-      // Маппинг продукта → направление/юрлицо (хранится в rawPayload для sync.ts)
-      const mapping = applyProductMapping(productName, mappings);
-
-      // Приоритет: payment_id → id для external_id (уникальность в источнике)
-      const externalId = `prodamus_${order.payment_id ?? order.id}`;
-
-      allTransactions.push({
-        externalId,
-        occurredAt,
-        amount,
-        currency: (order.currency.toUpperCase() as 'RUB' | 'USD' | 'EUR' | 'KZT') ?? 'RUB',
-        description: productName || null,
-        rawPayload: {
-          orderId: order.id,
-          productName,
-          directionId: mapping.directionId,
-          entityId: mapping.entityId,
-          categoryId: mapping.categoryId,
-          // НЕ включаем персональные данные покупателя
-        },
-      });
-    }
-
-    // Если меньше per_page — последняя страница
-    if (response.data.length < PER_PAGE) break;
-
-    page++;
-  }
-
-  return allTransactions;
-}
-
-// ── Тип для группировки по entity/direction/category ─────────────────────
-
-interface TxGroup {
-  entityId: string;
-  directionId: string | null;
-  categoryId: string | null;
-  transactions: RawSourceTransaction[];
-}
-
-// ── SourceSyncer implementation ───────────────────────────────────────────
-
-export const prodamusSyncer: SourceSyncer = {
-  code: 'prodamus',
-
-  async sync(sinceDate: string): Promise<SyncResult> {
-    const apiKey = config.PRODAMUS_API_KEY;
-
-    if (!apiKey) {
-      log.warn({ source: 'prodamus' }, 'prodamus_api_key_missing');
-      return { fetched: 0, inserted: 0 };
-    }
-
-    const raw = await fetchAllOrders(apiKey, sinceDate);
-    log.info({ source: 'prodamus', fetched: raw.length }, 'prodamus_fetched');
-
-    if (raw.length === 0) return { fetched: 0, inserted: 0 };
-
-    // Резолвим дефолтный entity_id из sources.entity_id для prodamus
-    const entityRows = await sql<{ entity_id: string | null }[]>`
-      SELECT entity_id FROM sources WHERE code = 'prodamus' LIMIT 1
-    `;
-    const defaultEntityId = entityRows[0]?.entity_id;
-
-    // Получаем owner для created_by
-    const users = await getAllActiveUsers();
-    const owner = users.find((u) => u.role === 'owner');
-    if (!owner) {
-      log.warn({ source: 'prodamus' }, 'prodamus_no_owner_user');
-      return { fetched: raw.length, inserted: 0 };
-    }
-
-    // Группируем транзакции по entity/direction/category из rawPayload
-    const groups = new Map<string, TxGroup>();
-    for (const tx of raw) {
-      const directionId = (tx.rawPayload['directionId'] as string | null) ?? null;
-      const entityId = (tx.rawPayload['entityId'] as string | null) ?? defaultEntityId ?? '';
-      const categoryId = (tx.rawPayload['categoryId'] as string | null) ?? null;
-
-      if (!entityId) {
-        log.warn({ source: 'prodamus', external_id: tx.externalId }, 'prodamus_no_entity_id');
-        continue;
-      }
-
-      const key = `${entityId}__${directionId ?? 'null'}__${categoryId ?? 'null'}`;
-      const existing = groups.get(key);
-      if (existing) {
-        existing.transactions.push(tx);
-      } else {
-        groups.set(key, { entityId, directionId, categoryId, transactions: [tx] });
-      }
-    }
-
-    let totalInserted = 0;
-
-    for (const group of groups.values()) {
-      const inserted = await insertSyncTransactions({
-        sourceCode: 'prodamus',
-        transactions: group.transactions,
-        createdBy: owner.id,
-        entityId: group.entityId,
-        directionId: group.directionId,
-        categoryId: group.categoryId,
-        flowType: 'income',
-      });
-      totalInserted += inserted;
-    }
-
-    return { fetched: raw.length, inserted: totalInserted };
-  },
-};

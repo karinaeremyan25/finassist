@@ -8,85 +8,69 @@ import { getAllActiveUsers } from '../../db/repositories/users.js';
 import { sql } from '../../db/client.js';
 
 /**
- * Точка Банк (Tochka) OAuth 2.0 синхронизатор.
+ * Точка Банк — pull-синхронизатор на реальном Open Banking API.
  *
- * Реализует:
- * - OAuth 2.0 client_credentials / authorization_code flow.
- * - Хранение access_token + refresh_token в памяти (для одного процесса PM2).
- * - Авто-рефреш по refresh_token при 401; при провале — CredentialsError.
- * - Загрузку выписки по расчётному счёту ООО.
+ * Поток:
+ *   1. OAuth client_credentials → access_token (24ч, кэш в памяти).
+ *   2. GET /accounts → список accountId.
+ *   3. Для каждого счёта:
+ *      a. POST /statements → statementId + статус.
+ *      b. Поллинг GET /accounts/{id}/statements/{sid} пока status !== 'Ready'.
+ *      c. Маппинг Transaction[] → RawSourceTransaction[].
+ *   4. Пакетная дедуп-вставка через insertSyncTransactions.
  *
- * ────────── ASSUMPTIONS (требуют сверки с реальной документацией) ──────────
+ * ────────── ASSUMPTIONS (требуют сверки на реальном API) ──────────
  *
- * ASSUMPTION 1: OAuth 2.0 endpoints
- *   Token URL: https://enter.tochka.com/connect/token
- *   API base: https://enter.tochka.com/uapi/open-banking/v1.0
- *   Документация: https://enter.tochka.com/documentation/api/open-banking
+ * ASSUMPTION A — имена полей Transaction:
+ *   Использованы официальные имена Open Banking UK (которым Точка следует).
+ *   Конкретные имена: transactionId, amount.amount, amount.currency,
+ *   creditDebitIndicator ('Credit'/'Debit'), bookingDateTime (ISO 8601),
+ *   transactionInformation / remittanceInformationUnstructured (описание),
+ *   status ('Booked'/'Pending').
+ *   ВАЖНО: сверить на реальном вебхуке/ответе Точки — имена могут отличаться
+ *   от стандарта (напр., DocumentProductDateTime вместо bookingDateTime).
  *
- * ASSUMPTION 2: grant_type
- *   Используется client_credentials для серверного доступа:
- *     POST /connect/token
- *     Body (form): grant_type=client_credentials&client_id=...&client_secret=...&scope=accounts transactions
- *   ВАЖНО: Точка может требовать предварительного consent (authorization_code).
- *          Если банк требует интерактивной авторизации — нужно доработать
- *          flow с redirect_uri (описан ниже в TODO).
+ * ASSUMPTION B — statement flow:
+ *   POST /statements → { Data: { Statement: { statementId, status } } }
+ *   GET  /accounts/{id}/statements/{sid} → { Data: { Statement: { status, Transaction: [] } } }
+ *   Статусы: Created → Processing → Ready.
+ *   Если через 5 попыток статус не Ready — бросаем ошибку.
  *
- * ASSUMPTION 3: список счетов
- *   GET /accounts → { Data: { Account: AccountItem[] } }
- *   AccountItem: { AccountId: string, Currency: string, AccountSubType: string, ... }
- *   Фильтруем по AccountSubType='CurrentAccount' (расчётный счёт).
+ * ASSUMPTION C — authorization_code flow:
+ *   Для полного доступа к выпискам Точка может требовать authorization_code + consent.
+ *   TODO: если client_credentials не даёт доступа к /statements —
+ *   добавить обработчик /api/oauth/tochka/callback и хранить refresh_token в БД.
+ *   Сейчас реализован только client_credentials.
  *
- * ASSUMPTION 4: выписка
- *   GET /accounts/{AccountId}/transactions?fromBookingDateTime=...&toBookingDateTime=...
- *   Response: { Data: { Transaction: TransactionItem[] } }
- *   TransactionItem: {
- *     TransactionId: string,
- *     BookingDateTime: string,     — ISO 8601 с временем
- *     Amount: { Amount: string, Currency: string },
- *     CreditDebitIndicator: 'Credit' | 'Debit',
- *     TransactionInformation: string | null,
- *     Status: 'Booked' | 'Pending',
- *   }
- *
- * ASSUMPTION 5: суммы
- *   Amount.Amount — строка в рублях ("1500.00").
- *   Credit → income, Debit → expense.
- *   Конвертируем в копейки через round(amount * 100).
- *
- * ASSUMPTION 6: пагинация
- *   Ответ может содержать Links.Next (ссылка на следующую страницу).
- *   Продолжаем запрашивать пока Links.Next присутствует.
- *
- * ASSUMPTION 7: токен-хранилище
- *   Хранится в памяти (Map). При рестарте PM2 — авто-рефреш на следующем запросе.
- *   access_token_expiry = now + expires_in - 60s (буфер).
- *
- * TODO: если требуется authorization_code flow — добавить обработчик callback
- *   в src/server/ и хранить refresh_token в БД (settings таблица).
- * ──────────────────────────────────────────────────────────────────────────
+ * ASSUMPTION D — scope:
+ *   Точка требует: 'accounts balances customers statements sbp payments'.
+ *   Проверить в настройках приложения в личном кабинете разработчика.
  */
 
 const log = childLogger({ handler: 'sync:tochka' });
 
 // ── Константы ────────────────────────────────────────────────────────────
 
-// ASSUMPTION 1: OAuth и API endpoints
 const TOCHKA_TOKEN_URL = 'https://enter.tochka.com/connect/token';
 const TOCHKA_API_BASE = 'https://enter.tochka.com/uapi/open-banking/v1.0';
 
-const HTTP_TIMEOUT_MS = 30_000;
-// ASSUMPTION 2: запрашиваемые scopes
-const TOCHKA_SCOPES = 'accounts transactions';
+// ASSUMPTION D: scope из официальной документации
+const TOCHKA_SCOPE = 'accounts balances customers statements sbp payments';
 
-// ── In-memory token storage ───────────────────────────────────────────────
+const HTTP_TIMEOUT_MS = 30_000;
+
+/** Максимальное число попыток поллинга статуса выписки. */
+const STATEMENT_POLL_MAX_ATTEMPTS = 5;
+/** Пауза между попытками поллинга (мс). */
+const STATEMENT_POLL_INTERVAL_MS = 3_000;
+
+// ── In-memory token cache ─────────────────────────────────────────────────
 
 interface TokenState {
   accessToken: string;
-  refreshToken: string | null;
   expiresAt: number; // unix ms
 }
 
-/** Хранение токена в памяти для одного PM2-процесса. */
 let tokenState: TokenState | null = null;
 
 function isTokenExpired(): boolean {
@@ -98,16 +82,15 @@ function isTokenExpired(): boolean {
 
 const TokenResponseSchema = z.object({
   access_token: z.string(),
-  token_type: z.string(),
   expires_in: z.number(),
-  refresh_token: z.string().optional(),
+  token_type: z.string().optional(),
   scope: z.string().optional(),
 });
 
 const AccountSchema = z.object({
-  AccountId: z.string(),
-  Currency: z.string().default('RUB'),
-  AccountSubType: z.string().optional(),
+  accountId: z.string(),
+  currency: z.string().default('RUB'),
+  accountSubType: z.string().optional(),
 });
 
 const AccountsResponseSchema = z.object({
@@ -116,208 +99,49 @@ const AccountsResponseSchema = z.object({
   }),
 });
 
-const TxAmountSchema = z.object({
-  Amount: z.string(),
-  Currency: z.string().default('RUB'),
-});
-
-const TochkaTxSchema = z.object({
-  TransactionId: z.string(),
-  BookingDateTime: z.string(),
-  Amount: TxAmountSchema,
-  CreditDebitIndicator: z.enum(['Credit', 'Debit']),
-  TransactionInformation: z.string().nullable().optional(),
-  Status: z.string().default('Booked'),
-});
-
-const TransactionsResponseSchema = z.object({
+/** Ответ на инициацию выписки. ASSUMPTION B */
+const InitStatementResponseSchema = z.object({
   Data: z.object({
-    Transaction: z.array(TochkaTxSchema).default([]),
+    Statement: z.object({
+      statementId: z.string(),
+      status: z.string(),
+    }),
   }),
-  Links: z.object({
-    Next: z.string().optional(),
-  }).optional(),
 });
 
-// ── CredentialsError ──────────────────────────────────────────────────────
+/** Одна операция из выписки Точки. ASSUMPTION A */
+const TochkaTxSchema = z.object({
+  // ASSUMPTION A: официальные Open Banking поля
+  transactionId: z.string(),
+  bookingDateTime: z.string(),
+  amount: z.object({
+    amount: z.string(),
+    currency: z.string().default('RUB'),
+  }),
+  creditDebitIndicator: z.enum(['Credit', 'Debit']),
+  // Описание — одно из двух возможных полей (ASSUMPTION A)
+  transactionInformation: z.string().nullable().optional(),
+  remittanceInformationUnstructured: z.string().nullable().optional(),
+  status: z.string().default('Booked'),
+});
+
+/** Ответ с выпиской (после Ready). ASSUMPTION B */
+const StatementReadySchema = z.object({
+  Data: z.object({
+    Statement: z.object({
+      status: z.string(),
+      Transaction: z.array(TochkaTxSchema).default([]),
+    }),
+  }),
+});
+
+// ── Typed errors ──────────────────────────────────────────────────────────
 
 export class CredentialsError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'CredentialsError';
   }
-}
-
-// ── OAuth helpers ─────────────────────────────────────────────────────────
-
-/**
- * Запрашивает новый access_token через client_credentials.
- */
-async function fetchTokenClientCredentials(
-  clientId: string,
-  clientSecret: string
-): Promise<TokenState> {
-  const body = new URLSearchParams({
-    grant_type: 'client_credentials',
-    client_id: clientId,
-    // НЕ логируем client_secret
-    client_secret: clientSecret,
-    scope: TOCHKA_SCOPES,
-  });
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
-
-  let responseBody: string;
-  try {
-    const res = await fetch(TOCHKA_TOKEN_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: body.toString(),
-      signal: controller.signal,
-    });
-
-    if (res.status === 401 || res.status === 403) {
-      throw new CredentialsError(`Tochka OAuth responded with HTTP ${res.status}`);
-    }
-    if (!res.ok) {
-      throw new Error(`Tochka OAuth HTTP ${res.status}`);
-    }
-    responseBody = await res.text();
-  } finally {
-    clearTimeout(timer);
-  }
-
-  let json: unknown;
-  try {
-    json = JSON.parse(responseBody);
-  } catch {
-    throw new Error('Tochka: failed to parse token response');
-  }
-
-  const parsed = TokenResponseSchema.safeParse(json);
-  if (!parsed.success) {
-    throw new Error(`Tochka: unexpected token response schema — ${parsed.error.message}`);
-  }
-
-  return {
-    accessToken: parsed.data.access_token,
-    refreshToken: parsed.data.refresh_token ?? null,
-    // expiresAt = now + expires_in - 60s (буфер для перекрытия)
-    expiresAt: Date.now() + (parsed.data.expires_in - 60) * 1000,
-  };
-}
-
-/**
- * Пробует обновить токен через refresh_token.
- * При ошибке — запрашивает новый через client_credentials.
- */
-async function refreshToken(
-  clientId: string,
-  clientSecret: string,
-  refreshTokenValue: string
-): Promise<TokenState> {
-  const body = new URLSearchParams({
-    grant_type: 'refresh_token',
-    client_id: clientId,
-    client_secret: clientSecret,
-    refresh_token: refreshTokenValue,
-  });
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
-
-  let responseBody: string;
-  try {
-    const res = await fetch(TOCHKA_TOKEN_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: body.toString(),
-      signal: controller.signal,
-    });
-
-    if (res.status === 401 || res.status === 403) {
-      // refresh_token невалиден — пробуем заново через client_credentials
-      log.warn({ source: 'tochka' }, 'tochka_refresh_token_invalid_retrying_cc');
-      return await fetchTokenClientCredentials(clientId, clientSecret);
-    }
-    if (!res.ok) {
-      throw new Error(`Tochka refresh HTTP ${res.status}`);
-    }
-    responseBody = await res.text();
-  } finally {
-    clearTimeout(timer);
-  }
-
-  let json: unknown;
-  try {
-    json = JSON.parse(responseBody);
-  } catch {
-    throw new Error('Tochka: failed to parse refresh token response');
-  }
-
-  const parsed = TokenResponseSchema.safeParse(json);
-  if (!parsed.success) {
-    return await fetchTokenClientCredentials(clientId, clientSecret);
-  }
-
-  return {
-    accessToken: parsed.data.access_token,
-    refreshToken: parsed.data.refresh_token ?? tokenState?.refreshToken ?? null,
-    expiresAt: Date.now() + (parsed.data.expires_in - 60) * 1000,
-  };
-}
-
-/**
- * Возвращает валидный access_token (авто-рефреш при истечении).
- */
-async function getAccessToken(clientId: string, clientSecret: string): Promise<string> {
-  if (isTokenExpired()) {
-    if (tokenState?.refreshToken) {
-      log.info({ source: 'tochka' }, 'tochka_refreshing_token');
-      tokenState = await refreshToken(clientId, clientSecret, tokenState.refreshToken);
-    } else {
-      log.info({ source: 'tochka' }, 'tochka_fetching_new_token');
-      tokenState = await fetchTokenClientCredentials(clientId, clientSecret);
-    }
-  }
-  return tokenState!.accessToken;
-}
-
-// ── API helpers ───────────────────────────────────────────────────────────
-
-async function apiGet(url: string, accessToken: string): Promise<unknown> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
-
-  let responseBody: string;
-  try {
-    const res = await fetch(url, {
-      method: 'GET',
-      headers: {
-        Accept: 'application/json',
-        Authorization: `Bearer ${accessToken}`,
-      },
-      signal: controller.signal,
-    });
-
-    if (res.status === 401) {
-      // Токен истёк прямо сейчас — сигналим для рефреша
-      throw new TokenExpiredError('Tochka API 401 — token expired');
-    }
-    if (res.status === 403) {
-      throw new CredentialsError(`Tochka API responded with HTTP 403`);
-    }
-    if (!res.ok) {
-      throw new Error(`Tochka API HTTP ${res.status} for ${url}`);
-    }
-
-    responseBody = await res.text();
-  } finally {
-    clearTimeout(timer);
-  }
-
-  return JSON.parse(responseBody);
 }
 
 class TokenExpiredError extends Error {
@@ -327,118 +151,288 @@ class TokenExpiredError extends Error {
   }
 }
 
+class StatementNotReadyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'StatementNotReadyError';
+  }
+}
+
+// ── HTTP helpers ──────────────────────────────────────────────────────────
+
+async function httpFetch(
+  url: string,
+  options: RequestInit
+): Promise<string> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    if (res.status === 401) throw new TokenExpiredError(`HTTP 401 from ${url}`);
+    if (res.status === 403) throw new CredentialsError(`HTTP 403 from ${url}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status} from ${url}`);
+    return await res.text();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function parseJson(raw: string, context: string): unknown {
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    throw new Error(`${context}: failed to parse JSON response`);
+  }
+}
+
+// ── OAuth ─────────────────────────────────────────────────────────────────
+
+async function fetchNewToken(clientId: string, clientSecret: string): Promise<TokenState> {
+  const body = new URLSearchParams({
+    grant_type: 'client_credentials',
+    client_id: clientId,
+    client_secret: clientSecret,
+    scope: TOCHKA_SCOPE,
+  });
+
+  log.info({ source: 'tochka' }, 'tochka_fetching_token');
+  const raw = await httpFetch(TOCHKA_TOKEN_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: body.toString(),
+  });
+
+  const parsed = TokenResponseSchema.safeParse(parseJson(raw, 'Tochka OAuth'));
+  if (!parsed.success) {
+    throw new Error(`Tochka OAuth: unexpected token schema — ${parsed.error.message}`);
+  }
+
+  // 24ч токен, буфер 60с
+  return {
+    accessToken: parsed.data.access_token,
+    expiresAt: Date.now() + (parsed.data.expires_in - 60) * 1000,
+  };
+}
+
+async function getAccessToken(clientId: string, clientSecret: string): Promise<string> {
+  if (isTokenExpired()) {
+    tokenState = await fetchNewToken(clientId, clientSecret);
+  }
+  return tokenState!.accessToken;
+}
+
+// ── API helpers ───────────────────────────────────────────────────────────
+
+async function apiGet(
+  path: string,
+  accessToken: string
+): Promise<unknown> {
+  const url = path.startsWith('http') ? path : `${TOCHKA_API_BASE}${path}`;
+  const raw = await httpFetch(url, {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+  return parseJson(raw, `Tochka GET ${path}`);
+}
+
+async function apiPost(
+  path: string,
+  body: unknown,
+  accessToken: string
+): Promise<unknown> {
+  const url = `${TOCHKA_API_BASE}${path}`;
+  const raw = await httpFetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(body),
+  });
+  return parseJson(raw, `Tochka POST ${path}`);
+}
+
 /**
- * Выполняет GET с авто-рефрешем при 401.
+ * Выполняет GET с авто-рефрешем при TokenExpiredError (401).
  */
 async function apiGetWithRefresh(
-  url: string,
+  path: string,
   clientId: string,
   clientSecret: string
 ): Promise<unknown> {
-  let accessToken = await getAccessToken(clientId, clientSecret);
+  let token = await getAccessToken(clientId, clientSecret);
   try {
-    return await apiGet(url, accessToken);
+    return await apiGet(path, token);
   } catch (err) {
     if (err instanceof TokenExpiredError) {
-      // Форсируем рефреш
+      log.info({ source: 'tochka' }, 'tochka_token_expired_refreshing');
       tokenState = null;
-      accessToken = await getAccessToken(clientId, clientSecret);
-      return await apiGet(url, accessToken);
+      token = await getAccessToken(clientId, clientSecret);
+      return await apiGet(path, token);
     }
     throw err;
   }
 }
 
-// ── Загрузка счетов ────────────────────────────────────────────────────────
-
-async function fetchCurrentAccounts(
+/**
+ * Выполняет POST с авто-рефрешем при 401.
+ */
+async function apiPostWithRefresh(
+  path: string,
+  body: unknown,
   clientId: string,
   clientSecret: string
-): Promise<string[]> {
-  const url = `${TOCHKA_API_BASE}/accounts`;
-  const json = await apiGetWithRefresh(url, clientId, clientSecret);
+): Promise<unknown> {
+  let token = await getAccessToken(clientId, clientSecret);
+  try {
+    return await apiPost(path, body, token);
+  } catch (err) {
+    if (err instanceof TokenExpiredError) {
+      tokenState = null;
+      token = await getAccessToken(clientId, clientSecret);
+      return await apiPost(path, body, token);
+    }
+    throw err;
+  }
+}
 
+// ── Счета ─────────────────────────────────────────────────────────────────
+
+async function fetchAccountIds(clientId: string, clientSecret: string): Promise<string[]> {
+  const json = await apiGetWithRefresh('/accounts', clientId, clientSecret);
   const parsed = AccountsResponseSchema.safeParse(json);
   if (!parsed.success) {
-    throw new Error(`Tochka: unexpected accounts schema — ${parsed.error.message}`);
+    throw new Error(`Tochka accounts: unexpected schema — ${parsed.error.message}`);
   }
-
-  // ASSUMPTION 3: фильтруем CurrentAccount
-  return parsed.data.Data.Account
-    .filter((a) => !a.AccountSubType || a.AccountSubType === 'CurrentAccount')
-    .map((a) => a.AccountId);
+  return parsed.data.Data.Account.map((a) => a.accountId);
 }
 
-// ── Загрузка транзакций ───────────────────────────────────────────────────
+// ── Выписка (statement flow) ──────────────────────────────────────────────
 
-/** "1500.50" → 150050n. Конвертация — через utils/money.ts (money.md). */
-function parseRubToKopecks(raw: string): bigint {
-  try {
-    const kopecks = toKopecks(raw);
-    return kopecks > 0n ? kopecks : 0n;
-  } catch {
-    return 0n;
-  }
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** ISO datetime → YYYY-MM-DD */
-function toDateOnly(iso: string): string {
-  return iso.slice(0, 10);
-}
-
-async function fetchAccountTransactions(
+/**
+ * Инициирует запрос выписки и поллит статус до Ready.
+ * ASSUMPTION B: POST /statements → statementId; GET polling → Ready.
+ */
+async function fetchStatement(
   accountId: string,
   sinceDate: string,
   clientId: string,
   clientSecret: string
 ): Promise<RawSourceTransaction[]> {
   const today = new Date().toISOString().slice(0, 10);
-  const fromDT = `${sinceDate}T00:00:00Z`;
-  const toDT = `${today}T23:59:59Z`;
 
-  const baseUrl =
-    `${TOCHKA_API_BASE}/accounts/${encodeURIComponent(accountId)}/transactions` +
-    `?fromBookingDateTime=${encodeURIComponent(fromDT)}` +
-    `&toBookingDateTime=${encodeURIComponent(toDT)}`;
+  // Шаг 1: инициировать выписку
+  const initBody = {
+    Data: {
+      Statement: {
+        accountId,
+        startDateTime: `${sinceDate}T00:00:00Z`,
+        endDateTime: `${today}T23:59:59Z`,
+      },
+    },
+  };
 
+  const initJson = await apiPostWithRefresh('/statements', initBody, clientId, clientSecret);
+  const initParsed = InitStatementResponseSchema.safeParse(initJson);
+  if (!initParsed.success) {
+    throw new Error(`Tochka initStatement: unexpected schema — ${initParsed.error.message}`);
+  }
+
+  const { statementId, status: initStatus } = initParsed.data.Data.Statement;
+  log.info({ source: 'tochka', account_id: accountId, statement_id: statementId, status: initStatus }, 'tochka_statement_initiated');
+
+  // Шаг 2: поллим статус
+  const pollPath = `/accounts/${encodeURIComponent(accountId)}/statements/${encodeURIComponent(statementId)}`;
+  let attempt = 0;
+
+  while (attempt < STATEMENT_POLL_MAX_ATTEMPTS) {
+    if (attempt > 0) {
+      await sleep(STATEMENT_POLL_INTERVAL_MS);
+    }
+
+    const pollJson = await apiGetWithRefresh(pollPath, clientId, clientSecret);
+    const pollParsed = StatementReadySchema.safeParse(pollJson);
+    if (!pollParsed.success) {
+      throw new Error(`Tochka pollStatement: unexpected schema — ${pollParsed.error.message}`);
+    }
+
+    const { status, Transaction: txList } = pollParsed.data.Data.Statement;
+    log.info({ source: 'tochka', account_id: accountId, poll_attempt: attempt + 1, status }, 'tochka_statement_poll');
+
+    if (status === 'Ready') {
+      return mapTransactions(accountId, txList);
+    }
+
+    // Created / Processing — продолжаем поллинг
+    attempt++;
+  }
+
+  throw new StatementNotReadyError(
+    `Tochka statement ${statementId} for account ${accountId} not ready after ${STATEMENT_POLL_MAX_ATTEMPTS} attempts`
+  );
+}
+
+// ── Маппинг операций ──────────────────────────────────────────────────────
+
+type TochkaTxItem = z.infer<typeof TochkaTxSchema>;
+
+/** "1500.50" → 150050n копеек. */
+function parseAmount(raw: string): bigint {
+  try {
+    const k = toKopecks(raw);
+    return k > 0n ? k : 0n;
+  } catch {
+    return 0n;
+  }
+}
+
+/** ISO 8601 datetime → YYYY-MM-DD */
+function toDateOnly(iso: string): string {
+  return iso.slice(0, 10);
+}
+
+function mapTransactions(accountId: string, items: TochkaTxItem[]): RawSourceTransaction[] {
   const result: RawSourceTransaction[] = [];
-  let nextUrl: string | undefined = baseUrl;
 
-  while (nextUrl !== undefined) {
-    const json = await apiGetWithRefresh(nextUrl, clientId, clientSecret);
-    const parsed = TransactionsResponseSchema.safeParse(json);
-    if (!parsed.success) {
-      throw new Error(`Tochka: unexpected transactions schema — ${parsed.error.message}`);
-    }
+  for (const item of items) {
+    // Только подтверждённые операции
+    if (item.status !== 'Booked') continue;
 
-    for (const item of parsed.data.Data.Transaction) {
-      // Только подтверждённые операции
-      if (item.Status !== 'Booked') continue;
+    const amount = parseAmount(item.amount.amount);
+    if (amount <= 0n) continue;
 
-      const amount = parseRubToKopecks(item.Amount.Amount);
-      if (amount <= 0n) continue;
+    const occurredAt = toDateOnly(item.bookingDateTime);
+    const flowType: 'income' | 'expense' = item.creditDebitIndicator === 'Credit' ? 'income' : 'expense';
 
-      const occurredAt = toDateOnly(item.BookingDateTime);
-      const flowType = item.CreditDebitIndicator === 'Credit' ? 'income' : 'expense';
+    // ASSUMPTION A: описание из одного из двух полей
+    const description =
+      item.transactionInformation ??
+      item.remittanceInformationUnstructured ??
+      null;
 
-      result.push({
-        externalId: `tochka_${accountId}_${item.TransactionId}`,
-        occurredAt,
-        amount,
-        currency: (item.Amount.Currency.toUpperCase() as 'RUB' | 'USD' | 'EUR' | 'KZT') ?? 'RUB',
-        description: item.TransactionInformation ?? null,
-        rawPayload: {
-          accountId,
-          transactionId: item.TransactionId,
-          creditDebitIndicator: item.CreditDebitIndicator,
-          flowType,
-          status: item.Status,
-          // НЕ включаем персональные данные контрагента
-        },
-      });
-    }
-
-    nextUrl = parsed.data.Links?.Next;
+    result.push({
+      externalId: `tochka_${accountId}_${item.transactionId}`,
+      occurredAt,
+      amount,
+      currency: (item.amount.currency.toUpperCase() as 'RUB' | 'USD' | 'EUR' | 'KZT'),
+      description,
+      rawPayload: {
+        accountId,
+        transactionId: item.transactionId,
+        creditDebitIndicator: item.creditDebitIndicator,
+        flowType,
+        status: item.status,
+        // НЕ включаем персональные данные контрагента и суммы
+      },
+    });
   }
 
   return result;
@@ -458,27 +452,34 @@ export const tochkaSyncer: SourceSyncer = {
       return { fetched: 0, inserted: 0 };
     }
 
-    // Загружаем счета ООО
-    const accountIds = await fetchCurrentAccounts(clientId, clientSecret);
+    // 1. Получаем список счетов
+    const accountIds = await fetchAccountIds(clientId, clientSecret);
     if (accountIds.length === 0) {
       log.warn({ source: 'tochka' }, 'tochka_no_accounts_found');
       return { fetched: 0, inserted: 0 };
     }
-
     log.info({ source: 'tochka', accounts: accountIds.length }, 'tochka_accounts_found');
 
-    // Загружаем транзакции по всем счетам
+    // 2. Для каждого счёта запрашиваем выписку через statement flow
     const allRaw: RawSourceTransaction[] = [];
     for (const accountId of accountIds) {
-      const txs = await fetchAccountTransactions(accountId, sinceDate, clientId, clientSecret);
-      allRaw.push(...txs);
+      try {
+        const txs = await fetchStatement(accountId, sinceDate, clientId, clientSecret);
+        allRaw.push(...txs);
+      } catch (err) {
+        // StatementNotReady — логируем и пропускаем счёт, не роняем весь синк
+        if (err instanceof StatementNotReadyError) {
+          log.warn({ source: 'tochka', account_id: accountId, err: String(err) }, 'tochka_statement_not_ready');
+          continue;
+        }
+        throw err;
+      }
     }
 
     log.info({ source: 'tochka', fetched: allRaw.length }, 'tochka_fetched');
-
     if (allRaw.length === 0) return { fetched: 0, inserted: 0 };
 
-    // Резолвим entity_id для ООО из sources.entity_id
+    // 3. entity_id из sources.entity_id для Точки (ООО)
     const entityRows = await sql<{ entity_id: string | null }[]>`
       SELECT entity_id FROM sources WHERE code = 'tochka' LIMIT 1
     `;
@@ -488,7 +489,7 @@ export const tochkaSyncer: SourceSyncer = {
       return { fetched: allRaw.length, inserted: 0 };
     }
 
-    // created_by — owner
+    // 4. created_by = owner
     const users = await getAllActiveUsers();
     const owner = users.find((u) => u.role === 'owner');
     if (!owner) {
@@ -496,7 +497,7 @@ export const tochkaSyncer: SourceSyncer = {
       return { fetched: allRaw.length, inserted: 0 };
     }
 
-    // Разбиваем на income/expense — у Tochka бывают оба
+    // 5. Разбиваем на income/expense (Tochka даёт оба)
     const incomeRaw = allRaw.filter((t) => t.rawPayload['flowType'] === 'income');
     const expenseRaw = allRaw.filter((t) => t.rawPayload['flowType'] === 'expense');
 

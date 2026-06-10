@@ -45,11 +45,16 @@ const ConfigSchema = z.object({
   WEBAPP_STATIC_DIR: z.string().default('src/app/webapp/dist'),
 
   // ── Интеграции: платёжные источники (optional, не логировать) ────────────
-  // Robokassa: логин магазина и второй пароль (Password2 для API).
+  // Robokassa: логин магазина и второй пароль (Password2 для подписи ResultURL).
+  // ResultURL = https://<домен>/api/webhooks/robokassa
   ROBOKASSA_MERCHANT_LOGIN: z.string().optional(),
   ROBOKASSA_PASSWORD: z.string().optional(),
-  // Prodamus: API-ключ (Bearer-токен).
+  // Prodamus: API-ключ (Bearer-токен, для возможных REST-запросов в будущем).
+  // Webhook URL = https://<домен>/api/webhooks/prodamus
   PRODAMUS_API_KEY: z.string().optional(),
+  // Prodamus: секретный ключ для HMAC-SHA256 подписи webhook (отдельный от API-ключа).
+  // Настройки Prodamus → Уведомления → Секретный ключ.
+  PRODAMUS_SECRET_KEY: z.string().optional(),
   // Точка Банк: OAuth 2.0 client_id и client_secret.
   TOCHKA_CLIENT_ID: z.string().optional(),
   TOCHKA_CLIENT_SECRET: z.string().optional(),
