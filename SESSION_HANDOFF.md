@@ -52,22 +52,27 @@
 - ✅ Эндпоинты: `POST /api/webapp/session`, `GET /api/analytics/{summary,charts,insights,transactions}`, `GET /api/webapp/users`, `POST /api/ai-chat` (+alias `/api/webapp/ai/chat`), `GET /api/health`. `summary.fundStatus` отдаёт `taxFund,reserveFund,gratitudeFund,creditFund,profitFund` (копейки) — donut сходится.
 - ✅ **`src/services/miniAppAi.ts`** — AI-наставник на `claude-opus-4-8` (`config.AI_MENTOR_MODEL`, temp 0.4). `callClaude` обратносовместимо расширен опциональными `model`/`temperature`.
 - ✅ **`src/app/webapp/`** — фронтенд Mini App (изолированный Vite+React+TS+Tailwind пакет, свой `package.json`/`node_modules`). Экраны: Dashboard (с donut по §6), Transactions, Users, Settings, Chat (AIChatWidget). Состояния Loading/Empty/Error/Partial. `npm run build` — чисто.
-- ✅ Миграция `db/migrations/004_add_last_seen.sql` (нужна `app_users.last_seen`).
-- ❌ Нет `src/services/integrations/` (robokassa/prodamus/tochka) — синхронизация источников (платформенный слой) ещё не реализована.
-- ❌ Нет `src/bot/handlers/miniApp.ts` — кнопка запуска Mini App из бота.
+- ✅ Миграции `004_add_last_seen.sql`, `005_sync_audit.sql` (таблица `sync_runs` + `sources.sync_enabled`).
+- ✅ **`src/services/integrations/`** (robokassa/prodamus/tochka/sync/types) + `src/db/repositories/integrations.ts` — синхронизация источников: cron `*/30`, дедуп по `external_id`, audit `sync_runs`, авто-отключение источника при невалидных credentials, алерты. ⚠️ API-эндпоинты источников помечены `// ASSUMPTION:` — **сверить с реальной докой Robokassa/Prodamus/Tochka** перед включением.
+- ✅ **`src/bot/handlers/miniApp.ts`** — команда `/app` + web_app-кнопка; `setChatMenuButton` при старте; web_app-кнопка в `/start`.
+- ✅ **`src/server/static.ts`** — раздача собранного `webapp/dist` из node:http (защита от path traversal — проверена тестом), SPA-fallback.
+- ⏳ Осталось: задеплоить (HTTPS/nginx/PM2 — [feature-spec-webapp-serving-deploy.md](feature-spec-webapp-serving-deploy.md)), заполнить credentials источников в `.env`, сверить ASSUMPTION-эндпоинты, применить миграции 004/005 на БД.
 
 ### Сборка / проверки
 - `npx tsc --noEmit` (корень) — **0 ошибок** (webapp исключён из корневого `tsconfig`, у него свой).
 - `npm run build` — собирает `dist/` (бэкенд). `cd src/app/webapp && npm run build` — собирает фронтенд.
 - ⚠️ `npm run lint`: tsc-половина проходит; **eslint-половина падала и ДО этой сессии** — в проекте нет `.eslintrc`/`eslint.config.*`. Нужно добавить конфиг ESLint (отдельная задача, не блокер сборки).
 
-### Бэклог нереализованных задач (спеки готовы)
-| Файл | Задача | Приоритет |
-|------|--------|-----------|
-| [feature-spec-integrations-sync.md](feature-spec-integrations-sync.md) | Синхронизация Robokassa/Prodamus/Tochka + cron + audit | High |
-| [feature-spec-bot-miniapp-launch.md](feature-spec-bot-miniapp-launch.md) | Кнопка запуска Mini App из бота (`/app`, web_app) | Medium |
-| [feature-spec-webapp-serving-deploy.md](feature-spec-webapp-serving-deploy.md) | Раздача статики `webapp/dist` + HTTPS/nginx/PM2 деплой | Medium |
-| [tech-debt-backlog.md](tech-debt-backlog.md) | Мелочи QA: LRU promptCache, entity-изоляция наставника, ESLint-конфиг, code-splitting, healthcheck | Low |
+### Бэклог задач (спеки готовы)
+| Файл | Задача | Статус |
+|------|--------|--------|
+| [feature-spec-integrations-sync.md](feature-spec-integrations-sync.md) | Синхронизация Robokassa/Prodamus/Tochka + cron + audit | ✅ Реализовано (сверить ASSUMPTION-эндпоинты + credentials) |
+| [feature-spec-bot-miniapp-launch.md](feature-spec-bot-miniapp-launch.md) | Кнопка запуска Mini App из бота (`/app`, web_app) | ✅ Реализовано (нужен `WEBAPP_URL` + регистрация у @BotFather) |
+| [feature-spec-webapp-serving-deploy.md](feature-spec-webapp-serving-deploy.md) | Раздача `webapp/dist` (Вариант B — node:http) | ✅ Реализовано; ⏳ HTTPS/nginx/PM2 деплой на VPS |
+| [tech-debt-backlog.md](tech-debt-backlog.md) | Мелочи QA: LRU promptCache, entity-изоляция наставника, ESLint-конфиг, code-splitting, healthcheck, source_type | ⏳ Low-priority |
+
+### Git
+Работа ведётся в git-репозитории, ветка `feat/platform-layer` (5 коммитов-чекпойнтов). `.gitignore` исключает `.env`, `*.csv` (финансовые выгрузки), `node_modules`, `dist`. Влить в `main` после деплой-проверки.
 
 ---
 
