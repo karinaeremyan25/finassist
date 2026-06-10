@@ -9,7 +9,10 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "lint": "eslint src --ext .ts && tsc --noEmit",
-    "test": "vitest"
+    "test": "vitest",
+    "migrate": "node scripts/migrate.mjs",
+    "migrate:status": "node scripts/migrate.mjs --status",
+    "preflight": "node scripts/check-env.mjs"
   },
   "dependencies": {
     "grammy": "^1.29.0",
