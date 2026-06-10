@@ -1,10 +1,21 @@
+import { InlineKeyboard } from 'grammy';
 import type { BotContextWithSession } from '../middleware/session.js';
 import { childLogger } from '../../utils/logger.js';
 import { sql } from '../../db/client.js';
 import { rubles } from '../../utils/money.js';
 import { getCurrentMonthPeriod } from '../../utils/dates.js';
+import { config } from '../../config.js';
 
 const log = childLogger({ handler: 'start' });
+
+/**
+ * Возвращает inline-клавиатуру с кнопкой открытия Mini App,
+ * либо undefined, если WEBAPP_URL не задан (деградация без ошибки).
+ */
+function miniAppKeyboard(): InlineKeyboard | undefined {
+  if (config.WEBAPP_URL === undefined) return undefined;
+  return new InlineKeyboard().webApp('📊 Открыть аналитику', config.WEBAPP_URL);
+}
 
 export async function handleStart(ctx: BotContextWithSession): Promise<void> {
   const user = ctx.user;
@@ -74,7 +85,11 @@ async function handleOwnerStart(ctx: BotContextWithSession): Promise<void> {
     `• Прибыль: ${esc(rubles(profit))}\n` +
     `• ${taxLine}`;
 
-  await ctx.reply(text, { parse_mode: 'MarkdownV2' });
+  const keyboard = miniAppKeyboard();
+  await ctx.reply(text, {
+    parse_mode: 'MarkdownV2',
+    reply_markup: keyboard,
+  });
 }
 
 async function handleAccountantStart(ctx: BotContextWithSession): Promise<void> {
@@ -94,7 +109,11 @@ async function handleAccountantStart(ctx: BotContextWithSession): Promise<void> 
     `• /help — все команды\n\n` +
     `📋 Ожидают верификации: *${count}* транзакций`;
 
-  await ctx.reply(text, { parse_mode: 'MarkdownV2' });
+  const keyboard = miniAppKeyboard();
+  await ctx.reply(text, {
+    parse_mode: 'MarkdownV2',
+    reply_markup: keyboard,
+  });
 }
 
 async function handleManagerStart(ctx: BotContextWithSession): Promise<void> {
@@ -134,7 +153,11 @@ async function handleManagerStart(ctx: BotContextWithSession): Promise<void> {
     `• /help — все команды` +
     expenseLine;
 
-  await ctx.reply(text, { parse_mode: 'MarkdownV2' });
+  const keyboard = miniAppKeyboard();
+  await ctx.reply(text, {
+    parse_mode: 'MarkdownV2',
+    reply_markup: keyboard,
+  });
 }
 
 export async function handleHelp(ctx: BotContextWithSession): Promise<void> {

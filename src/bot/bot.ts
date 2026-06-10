@@ -1,5 +1,6 @@
 import { Bot } from 'grammy';
 import { config } from '../config.js';
+import { childLogger } from '../utils/logger.js';
 import type { BotContextWithSession } from './middleware/session.js';
 import { authMiddleware } from './middleware/auth.js';
 import { sessionMiddleware } from './middleware/session.js';
@@ -7,6 +8,7 @@ import { errorHandler } from './middleware/error.js';
 
 // Handlers
 import { handleStart, handleHelp, handleCancel } from './handlers/start.js';
+import { handleMiniApp } from './handlers/miniApp.js';
 import {
   handleTextMessage,
   handleVoiceMessage,
@@ -19,6 +21,8 @@ import { handleFunds, handleFundCallback } from './handlers/funds.js';
 import { handleDistribute, handleDistCallback } from './handlers/distribute.js';
 import { handleVerify, handleVerifyCallback } from './handlers/verify.js';
 import { handleSettings, handleSettingsCallback, handleNavCallback } from './handlers/settings.js';
+
+const log = childLogger({ handler: 'bot' });
 
 /**
  * Создаёт и настраивает экземпляр бота grammY.
@@ -40,6 +44,7 @@ export function createBot(): Bot<BotContextWithSession> {
   bot.command('start', handleStart);
   bot.command('help', handleHelp);
   bot.command('cancel', handleCancel);
+  bot.command('app', handleMiniApp);
 
   // ── Функциональные команды (все роли — роль не ограничивает доступ) ──────
   bot.command('import', handleImport);
@@ -99,4 +104,30 @@ export function createBot(): Bot<BotContextWithSession> {
   bot.catch(errorHandler);
 
   return bot;
+}
+
+/**
+ * Устанавливает кнопку меню бота (Menu Button) на web_app.
+ * Вызывать однократно при старте — после инициализации бота.
+ * Если WEBAPP_URL не задан — пропускает вызов (деградация без ошибки).
+ */
+export async function registerMenuButton(bot: Bot<BotContextWithSession>): Promise<void> {
+  if (config.WEBAPP_URL === undefined) {
+    log.info({ handler: 'bot' }, 'menu_button_skip_no_url');
+    return;
+  }
+
+  try {
+    await bot.api.setChatMenuButton({
+      menu_button: {
+        type: 'web_app',
+        text: 'Аналитика',
+        web_app: { url: config.WEBAPP_URL },
+      },
+    });
+    log.info({ handler: 'bot', webapp_url: config.WEBAPP_URL }, 'menu_button_set_ok');
+  } catch (err) {
+    // Не фатально — бот продолжает работу без кнопки меню.
+    log.warn({ err, handler: 'bot' }, 'menu_button_set_failed');
+  }
 }

@@ -3,7 +3,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { config } from './config.js';
 import { sql, disconnect } from './db/client.js';
-import { createBot } from './bot/bot.js';
+import { createBot, registerMenuButton } from './bot/bot.js';
 import { fetchAndStoreFxRates } from './services/cbr.js';
 import { checkTaxFund, sendWeeklySummary } from './services/alerts.js';
 import { clearExpiredSessions } from './db/repositories/sessions.js';
@@ -173,6 +173,9 @@ async function main(): Promise<void> {
   await bot.start({
     onStart: (info) => {
       log.info({ username: info.username }, 'bot_started');
+      // Устанавливаем Menu Button один раз при старте.
+      // Вызов не блокирует polling — ошибка обработается внутри.
+      void registerMenuButton(bot);
     },
   });
 }

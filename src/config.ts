@@ -37,6 +37,12 @@ const ConfigSchema = z.object({
         ? s.split(',').map(o => o.trim()).filter(Boolean)
         : []
     ),
+  // Публичный HTTPS-URL Mini App (нужен для web_app-кнопки Telegram).
+  // Если не задан — кнопка /app деградирует до текстового предупреждения.
+  WEBAPP_URL: z.string().url().optional(),
+  // Путь до собранного фронтенда Mini App (Вариант B — раздача из Node).
+  // В разработке: src/app/webapp/dist, в проде указать на реальный dist.
+  WEBAPP_STATIC_DIR: z.string().default('src/app/webapp/dist'),
 
   // ── Интеграции: платёжные источники (optional, не логировать) ────────────
   // Robokassa: логин магазина и второй пароль (Password2 для API).

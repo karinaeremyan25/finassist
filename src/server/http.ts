@@ -2,6 +2,7 @@ import http from 'node:http';
 import { URL } from 'node:url';
 import { config } from '../config.js';
 import { childLogger } from '../utils/logger.js';
+import { serveStatic } from './static.js';
 
 const log = childLogger({ handler: 'http' });
 
@@ -165,6 +166,21 @@ export function createHttpServer(router: Router): http.Server {
       res.end(jsonStringify({ status: 'ok', timestamp: new Date().toISOString() }));
       log.info({ handler: 'health', latency_ms: Date.now() - start }, 'health_ok');
       return;
+    }
+
+    // ── Static file serving (Вариант B) ──────────────────────────────────
+    // Обрабатываем только GET-запросы не начинающиеся с /api.
+    // /api/* маршруты продолжают обрабатываться через router ниже.
+    if (method === 'GET' && !pathname.startsWith('/api')) {
+      try {
+        const handled = await serveStatic(req, res, pathname, config.WEBAPP_STATIC_DIR);
+        if (handled) return;
+      } catch (err) {
+        log.error({ err, handler: 'static', pathname, latency_ms: Date.now() - start }, 'static_error');
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(jsonStringify({ error: { code: 'internal_error', message: 'Ошибка при отдаче файла' } }));
+        return;
+      }
     }
 
     const handler = router.find(method, pathname);
