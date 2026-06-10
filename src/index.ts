@@ -9,6 +9,7 @@ import { checkTaxFund, sendWeeklySummary } from './services/alerts.js';
 import { clearExpiredSessions } from './db/repositories/sessions.js';
 import { childLogger } from './utils/logger.js';
 import { startHttpServer, stopHttpServer, buildRouter } from './server/index.js';
+import { syncAllSources } from './services/integrations/sync.js';
 
 const log = childLogger({ handler: 'main' });
 
@@ -91,6 +92,19 @@ async function main(): Promise<void> {
       if (count > 0) log.info({ count }, 'cron_sessions_cleared');
     } catch (err) {
       log.error({ err }, 'cron_sessions_error');
+    }
+  });
+
+  // Every 30 minutes — sync payment sources (Robokassa, Prodamus, Tochka)
+  // TODO: когда будет готов канал доставки (Mini App push/Telegram channel) —
+  //       добавить здесь вызов generateDailyFinancialReport() и отправку.
+  //       Сейчас функция есть в services/miniApp.ts, но канала доставки нет.
+  cron.schedule('*/30 * * * *', async () => {
+    try {
+      await syncAllSources(bot as never);
+      log.info('cron_sync_ok');
+    } catch (err) {
+      log.error({ err }, 'cron_sync_error');
     }
   });
 

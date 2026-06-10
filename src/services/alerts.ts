@@ -263,3 +263,80 @@ function buildWeeklySummaryMessage(
 
   return lines.join('\n');
 }
+
+// ─────────────────────────────────────────────────────────────
+// Алерты синхронизации источников
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Отправляет владельцу алерт об ошибке синхронизации источника.
+ *
+ * Не пишет в alert_log (таблица ограничена CHECK для бот-алертов).
+ * errorDetail должен содержать только метаданные — без ключей/паролей.
+ */
+export async function sendSyncErrorAlert(
+  bot: Bot<BotContext>,
+  sourceCode: string,
+  errorDetail: string
+): Promise<void> {
+  try {
+    const users = await getAllActiveUsers();
+    const owner = users.find((u) => u.role === 'owner');
+    if (!owner) {
+      log.warn({ source: sourceCode }, 'sync_alert_no_owner');
+      return;
+    }
+
+    const message = [
+      `⚠️ *Ошибка синхронизации источника*`,
+      ``,
+      `Источник: \`${sourceCode}\``,
+      `Время: ${formatDateMSK(new Date())} МСК`,
+      `Детали: ${errorDetail}`,
+      ``,
+      `Источник продолжит синхронизацию при следующем запуске.`,
+    ].join('\n');
+
+    await bot.api.sendMessage(Number(owner.telegramId), message, { parse_mode: 'Markdown' });
+    log.info({ source: sourceCode, recipient_id: owner.id }, 'sync_error_alert_sent');
+  } catch (err) {
+    log.error({ err, source: sourceCode }, 'sync_error_alert_send_failed');
+  }
+}
+
+/**
+ * Отправляет владельцу алерт об автоматическом отключении источника
+ * из-за невалидных credentials.
+ */
+export async function sendSourceDisabledAlert(
+  bot: Bot<BotContext>,
+  sourceCode: string,
+  reason: string
+): Promise<void> {
+  try {
+    const users = await getAllActiveUsers();
+    const owner = users.find((u) => u.role === 'owner');
+    if (!owner) {
+      log.warn({ source: sourceCode }, 'sync_disable_alert_no_owner');
+      return;
+    }
+
+    const message = [
+      `🔴 *Источник отключён: невалидные credentials*`,
+      ``,
+      `Источник: \`${sourceCode}\``,
+      `Причина: ${reason}`,
+      `Время: ${formatDateMSK(new Date())} МСК`,
+      ``,
+      `Синхронизация остановлена до исправления.`,
+      `Обновите API-ключи в *.env* и перезапустите бота,`,
+      `затем включите источник через /settings или SQL:`,
+      `\`UPDATE sources SET sync_enabled=true WHERE code='${sourceCode}';\``,
+    ].join('\n');
+
+    await bot.api.sendMessage(Number(owner.telegramId), message, { parse_mode: 'Markdown' });
+    log.info({ source: sourceCode, recipient_id: owner.id }, 'sync_source_disabled_alert_sent');
+  } catch (err) {
+    log.error({ err, source: sourceCode }, 'sync_source_disabled_alert_send_failed');
+  }
+}

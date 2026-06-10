@@ -37,6 +37,16 @@ const ConfigSchema = z.object({
         ? s.split(',').map(o => o.trim()).filter(Boolean)
         : []
     ),
+
+  // ── Интеграции: платёжные источники (optional, не логировать) ────────────
+  // Robokassa: логин магазина и второй пароль (Password2 для API).
+  ROBOKASSA_MERCHANT_LOGIN: z.string().optional(),
+  ROBOKASSA_PASSWORD: z.string().optional(),
+  // Prodamus: API-ключ (Bearer-токен).
+  PRODAMUS_API_KEY: z.string().optional(),
+  // Точка Банк: OAuth 2.0 client_id и client_secret.
+  TOCHKA_CLIENT_ID: z.string().optional(),
+  TOCHKA_CLIENT_SECRET: z.string().optional(),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
