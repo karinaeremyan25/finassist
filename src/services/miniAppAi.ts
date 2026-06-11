@@ -146,16 +146,23 @@ async function buildDataContext(
   dateTo: string,
   entityId: string | null
 ): Promise<MentorDataContext> {
-  const [weekly, scopedTotals, topExpenses, categoryExpenses, fundBalances, overview] =
-    await Promise.all([
-      getWeeklyRevenue(dateFrom, dateTo),
-      // Заголовочные доход/расход — с учётом выбранного юрлица (entity-aware).
-      getSummaryTotals({ dateFrom, dateTo, entityId, directionId: null }),
-      getTopExpenseCategories(dateFrom, dateTo, 5),
-      getCategoryExpenses(dateFrom, dateTo),
-      getAllFundBalances(),
-      getMiniAppFinancialOverview(),
-    ]);
+  // ПОСЛЕДОВАТЕЛЬНО (а не Promise.all): pgBouncer (transaction mode, 6543) в
+  // serverless зависает на параллельных запросах → функция AI-наставника висела
+  // бесконечно. Запросы лёгкие, последовательно — быстро.
+  const weekly = await getWeeklyRevenue(dateFrom, dateTo);
+  // Заголовочные доход/расход — с учётом выбранного юрлица (entity-aware).
+  const scopedTotals = await getSummaryTotals({ dateFrom, dateTo, entityId, directionId: null });
+  const topExpenses = await getTopExpenseCategories(dateFrom, dateTo, 5);
+  const categoryExpenses = await getCategoryExpenses(dateFrom, dateTo);
+  const fundBalances = await getAllFundBalances();
+  // overview опционален: он завязан на коды юрлиц/налоговую логику, которые могут
+  // не совпадать с текущей схемой БД. Если упадёт — наставник работает без него.
+  let overview: Awaited<ReturnType<typeof getMiniAppFinancialOverview>> | null = null;
+  try {
+    overview = await getMiniAppFinancialOverview();
+  } catch {
+    overview = null;
+  }
 
   const transactionsCount = weekly.incomeCount + weekly.expenseCount;
   // Если выбрано юрлицо — заголовочная сводка по нему; иначе по всему аккаунту.
@@ -197,36 +204,38 @@ async function buildDataContext(
     lines.push(`Балансы фондов (по всему аккаунту): ${funds}.`);
   }
 
-  // Налоговый напоминатель
-  const tax = overview.taxReminder;
-  if (tax.nextDeadline !== null) {
+  if (overview !== null) {
+    // Налоговый напоминатель
+    const tax = overview.taxReminder;
+    if (tax.nextDeadline !== null) {
+      lines.push(
+        `Налоги: ближайший срок ${tax.nextDeadline}` +
+          (tax.daysUntil !== null ? ` (через ${tax.daysUntil} дн.)` : '') +
+          `, ожидаемый налог ${rubles(tax.expectedTaxKopecks)}, ` +
+          `в налоговом фонде ${rubles(tax.currentTaxFundKopecks)}` +
+          (tax.isUnderfunded ? `, нехватка ${rubles(tax.shortfallKopecks)}.` : ', фонд покрывает.')
+      );
+    }
+
+    // Кредитная нагрузка
+    const loan = overview.loanBurden;
     lines.push(
-      `Налоги: ближайший срок ${tax.nextDeadline}` +
-        (tax.daysUntil !== null ? ` (через ${tax.daysUntil} дн.)` : '') +
-        `, ожидаемый налог ${rubles(tax.expectedTaxKopecks)}, ` +
-        `в налоговом фонде ${rubles(tax.currentTaxFundKopecks)}` +
-        (tax.isUnderfunded ? `, нехватка ${rubles(tax.shortfallKopecks)}.` : ', фонд покрывает.')
+      `Кредитная нагрузка: выплаты ${rubles(loan.loanExpenseKopecks)} ` +
+        `(${pct(loan.ratioPercent)} от выручки, цель-минимум ${loan.targetPercent}%).`
+    );
+
+    // Фонд благодарности
+    const gratitude = overview.gratitudeFund;
+    lines.push(
+      `Фонд «${gratitude.label}»: ${rubles(gratitude.amountKopecks)} по ${gratitude.count} операциям.`
+    );
+
+    // ФОТ / оптимизация фондов
+    const opt = overview.fundOptimization;
+    lines.push(
+      `ФОТ + налоги на ФОТ: ${pct(opt.fotSharePercent)} от выручки (цель не выше ${opt.targetPercent}%).`
     );
   }
-
-  // Кредитная нагрузка
-  const loan = overview.loanBurden;
-  lines.push(
-    `Кредитная нагрузка: выплаты ${rubles(loan.loanExpenseKopecks)} ` +
-      `(${pct(loan.ratioPercent)} от выручки, цель-минимум ${loan.targetPercent}%).`
-  );
-
-  // Фонд благодарности
-  const gratitude = overview.gratitudeFund;
-  lines.push(
-    `Фонд «${gratitude.label}»: ${rubles(gratitude.amountKopecks)} по ${gratitude.count} операциям.`
-  );
-
-  // ФОТ / оптимизация фондов
-  const opt = overview.fundOptimization;
-  lines.push(
-    `ФОТ + налоги на ФОТ: ${pct(opt.fotSharePercent)} от выручки (цель не выше ${opt.targetPercent}%).`
-  );
 
   return { text: lines.join('\n'), hasData };
 }
