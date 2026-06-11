@@ -132,7 +132,7 @@ function Bubble({ msg }: { msg: Msg }) {
   return (
     <div className="flex justify-start">
       <div
-        className="max-w-[90%] rounded-md px-4 py-3 text-[15px] leading-[22px]"
+        className="max-w-[90%] whitespace-pre-line rounded-md px-4 py-3 text-[15px] leading-[22px]"
         style={{
           background: 'var(--surface-2)',
           color: isError ? 'var(--expense)' : 'var(--text)',
