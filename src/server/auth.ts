@@ -57,11 +57,9 @@ export function verifyInitData(initData: string): { telegramId: bigint; rawUser:
 
   // Разбиваем на пары
   const params = new URLSearchParams(initData);
-  const keyList = [...params.keys()].sort().join(',');
   const hash = params.get('hash');
   if (hash === null || hash.length === 0) {
-    console.error(`[AUTHDBG] no_hash len=${initData.length} keys=${keyList}`);
-    throw new WebAppAuthError('Сессия не распознана', `no_hash:${keyList}`);
+    throw new WebAppAuthError('Сессия не распознана', 'no_hash');
   }
 
   const secretKey = hmacSha256('WebAppData', config.BOT_TOKEN);
@@ -87,13 +85,11 @@ export function verifyInitData(initData: string): { telegramId: bigint; rawUser:
   const matchA = hashA.toLowerCase() === recvLower;
   const matchB = hashB.toLowerCase() === recvLower;
 
-  // Используем вариант B (исключаем signature) как основной.
-  const dataCheckString = dcsB;
+  // Принимаем, если совпал любой из вариантов (с signature или без).
   const hashesMatch = matchA || matchB;
 
   if (!hashesMatch) {
-    console.error(`[AUTHDBG] hmac_mismatch keys=${keyList} matchA=${matchA} matchB=${matchB} dcsBLen=${dataCheckString.length} tokenLen=${config.BOT_TOKEN.length}`);
-    throw new WebAppAuthError('Сессия не распознана', `hmac A=${matchA} B=${matchB} keys=[${keyList}] tok=${config.BOT_TOKEN.length}`);
+    throw new WebAppAuthError('Сессия не распознана', 'hmac');
   }
 
   // Проверка свежести
@@ -110,8 +106,7 @@ export function verifyInitData(initData: string): { telegramId: bigint; rawUser:
   // иначе при утечке токена можно было бы выпустить вечную сессию.
   const CLOCK_SKEW_SECONDS = 300;
   if (ageSeconds > MAX_AGE_SECONDS || ageSeconds < -CLOCK_SKEW_SECONDS) {
-    console.error(`[AUTHDBG] authdate_out_of_range age=${ageSeconds}`);
-    throw new WebAppAuthError('Сессия не распознана', `authdate age=${ageSeconds}`);
+    throw new WebAppAuthError('Сессия не распознана', 'authdate');
   }
 
   // Парсим user
@@ -165,11 +160,7 @@ export async function resolveWebAppUser(req: ApiRequest): Promise<AppUser> {
     }
   }
 
-  const hdrDbg = req.rawReq.headers['x-telegram-init-data'];
-  console.error(`[AUTHDBG] header_present=${typeof hdrDbg === 'string'} header_len=${typeof hdrDbg === 'string' ? hdrDbg.length : 0} resolved=${initData !== null}`);
-
   if (initData === null) {
-    console.error('[AUTHDBG] no_initData_source');
     throw new WebAppAuthError('Сессия не распознана', 'no_initdata');
   }
 
@@ -177,11 +168,9 @@ export async function resolveWebAppUser(req: ApiRequest): Promise<AppUser> {
 
   const user = await getUserByTelegramId(telegramId);
   if (user === null || !user.isActive) {
-    console.error(`[AUTHDBG] user_not_found_or_inactive tg=${telegramId.toString()}`);
     log.warn({ telegram_id: telegramId.toString() }, 'webapp_auth_denied');
-    throw new WebAppAuthError('Сессия не распознана', `usernotfound tg=${telegramId.toString()}`);
+    throw new WebAppAuthError('Сессия не распознана', 'user_not_found');
   }
-  console.error(`[AUTHDBG] auth_ok tg=${telegramId.toString()}`);
 
   // Отмечаем активность для экрана /users (fire-and-forget — не блокируем запрос).
   void touchUserLastSeen(telegramId).catch((err: unknown) => {
@@ -193,11 +182,11 @@ export async function resolveWebAppUser(req: ApiRequest): Promise<AppUser> {
 
 // ── Convenience: build 401 response body ──────────────────────────────────
 
-export function unauthorizedResponse(reason?: string): { status: 401; body: { error: { code: string; message: string } } } {
-  // ВРЕМЕННО: добавляем reason в текст, чтобы увидеть причину прямо в приложении.
-  const message = reason ? `Сессия не распознана · ${reason}` : 'Сессия не распознана';
+export function unauthorizedResponse(_reason?: string): { status: 401; body: { error: { code: string; message: string } } } {
+  // _reason оставлен в сигнатуре для совместимости вызовов, но НЕ раскрывается
+  // наружу (внутренние детали проверки не должны попадать в ответ клиенту).
   return {
     status: 401,
-    body: { error: { code: 'unauthorized', message } },
+    body: { error: { code: 'unauthorized', message: 'Сессия не распознана' } },
   };
 }

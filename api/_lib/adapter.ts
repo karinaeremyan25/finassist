@@ -102,14 +102,13 @@ export function toVercel(handler: ApiHandler) {
     } catch (err) {
       // Обработчики бросают неперехваченные ошибки наружу (на VPS их ловит
       // src/server/http.ts). Здесь воспроизводим тот же контракт: 500 + JSON.
-      // ВРЕМЕННО: текст ошибки в сообщении для диагностики.
-      const dbg = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
-      console.error(`[ADAPTER_ERR] ${dbg}`);
+      // Детали ошибки логируем (видно в Vercel logs), но НЕ раскрываем клиенту.
+      console.error(`[api_error] ${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}`);
       res.status(500);
       res.setHeader('Content-Type', 'application/json');
       res.send(
         JSON.stringify({
-          error: { code: 'internal_error', message: `Внутренняя ошибка · ${dbg}`.slice(0, 300) },
+          error: { code: 'internal_error', message: 'Внутренняя ошибка сервера' },
         })
       );
       return;
