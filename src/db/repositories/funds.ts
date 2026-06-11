@@ -36,29 +36,24 @@ interface FundBalanceRow {
   id: string;
   code: string;
   display_name: string;
-  default_percentage: string;
   balance: bigint | null;
 }
 
 /**
- * Балансы всех фондов на дату (включительно). Если asOfDate не задан —
- * на текущий момент. Возвращает базовые балансы; tax_status (для алертов)
- * добавляется в services/funds.ts.
+ * Балансы всех фондов. Реальная схема БД хранит баланс прямо в колонке
+ * funds.balance (поле названия — name), без default_percentage/display_order.
+ * asOfDate игнорируется (баланс текущий). tax_status добавляется в services/funds.ts.
  */
-export async function getFundBalances(asOfDate?: string): Promise<FundBalance[]> {
+export async function getFundBalances(_asOfDate?: string): Promise<FundBalance[]> {
   const rows = await sql<FundBalanceRow[]>`
     SELECT
-      f.id,
-      f.code,
-      f.display_name,
-      f.default_percentage,
-      COALESCE(SUM(ft.amount), 0)::bigint AS balance
-    FROM funds f
-    LEFT JOIN fund_transactions ft
-      ON ft.fund_id = f.id
-      ${asOfDate !== undefined ? sql`AND ft.occurred_at <= ${asOfDate}` : sql``}
-    GROUP BY f.id, f.code, f.display_name, f.default_percentage, f.display_order
-    ORDER BY f.display_order ASC
+      id,
+      code,
+      name AS display_name,
+      COALESCE(balance, 0)::bigint AS balance
+    FROM funds
+    WHERE deleted_at IS NULL
+    ORDER BY code ASC
   `;
 
   return rows.map((row) => ({
@@ -66,7 +61,7 @@ export async function getFundBalances(asOfDate?: string): Promise<FundBalance[]>
     code: row.code as FundCode,
     displayName: row.display_name,
     balanceKopecks: row.balance ?? 0n,
-    defaultPercentage: Number(row.default_percentage),
+    defaultPercentage: 0,
   }));
 }
 

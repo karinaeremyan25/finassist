@@ -38,7 +38,7 @@ export const sessionHandler: ApiHandler = async (req) => {
     const directionRows = await sql<DirectionRow[]>`
       SELECT id, display_name FROM directions
       WHERE is_active = true
-      ORDER BY display_order ASC, code ASC
+      ORDER BY code ASC
     `;
 
     const period = getCurrentMonthPeriod();

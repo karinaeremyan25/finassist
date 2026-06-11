@@ -139,9 +139,18 @@ export const summaryHandler: ApiHandler = async (req) => {
 
     return { status: 200, body: summary };
   } catch (err) {
-    if (err instanceof WebAppAuthError) return unauthorizedResponse();
+    if (err instanceof WebAppAuthError) return unauthorizedResponse(err.reason);
+    console.error(`[SUMMARY_ERR] ${err instanceof Error ? err.message : String(err)}`);
     log.error({ err, handler: 'summary', latency_ms: Date.now() - start }, 'analytics_summary_error');
-    throw err;
+    // Деградация: пустая сводка вместо 500, чтобы дашборд открылся.
+    return {
+      status: 200,
+      body: {
+        totalIncome: 0, totalExpense: 0, balance: 0,
+        fundStatus: { taxFund: 0, reserveFund: 0, gratitudeFund: 0, creditFund: 0, profitFund: 0 },
+        categoryBreakdown: [],
+      },
+    };
   }
 };
 
@@ -192,9 +201,10 @@ export const chartsHandler: ApiHandler = async (req) => {
 
     return { status: 200, body: payload };
   } catch (err) {
-    if (err instanceof WebAppAuthError) return unauthorizedResponse();
+    if (err instanceof WebAppAuthError) return unauthorizedResponse(err.reason);
+    console.error(`[CHARTS_ERR] ${err instanceof Error ? err.message : String(err)}`);
     log.error({ err, handler: 'charts', latency_ms: Date.now() - start }, 'analytics_charts_error');
-    throw err;
+    return { status: 200, body: { labels: [], series: [], type: 'line' } };
   }
 };
 
@@ -259,12 +269,13 @@ export const insightsHandler: ApiHandler = async (req) => {
 
     return { status: 200, body: { insights } };
   } catch (err) {
-    if (err instanceof WebAppAuthError) return unauthorizedResponse();
+    if (err instanceof WebAppAuthError) return unauthorizedResponse(err.reason);
+    console.error(`[INSIGHTS_ERR] ${err instanceof Error ? err.message : String(err)}`);
     log.error(
       { err, handler: 'insights', latency_ms: Date.now() - start },
       'analytics_insights_error'
     );
-    throw err;
+    return { status: 200, body: { insights: [] } };
   }
 };
 
@@ -315,12 +326,13 @@ export const transactionsHandler: ApiHandler = async (req) => {
       },
     };
   } catch (err) {
-    if (err instanceof WebAppAuthError) return unauthorizedResponse();
+    if (err instanceof WebAppAuthError) return unauthorizedResponse(err.reason);
+    console.error(`[TRANSACTIONS_ERR] ${err instanceof Error ? err.message : String(err)}`);
     log.error(
       { err, handler: 'transactions', latency_ms: Date.now() - start },
       'analytics_transactions_error'
     );
-    throw err;
+    return { status: 200, body: { transactions: [], total: 0 } };
   }
 };
 
