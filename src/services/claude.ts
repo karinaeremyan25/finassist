@@ -146,16 +146,22 @@ async function createMessage(
   messages: Anthropic.MessageParam[],
   maxTokens: number,
   model: string,
-  temperature: number
+  temperature: number | undefined
 ): Promise<Anthropic.Message> {
+  // `temperature` устарел и ОТКЛОНЯЕТСЯ новыми моделями (opus 4.8 и др.):
+  // 400 invalid_request_error "temperature is deprecated for this model".
+  // Поэтому добавляем параметр в запрос ТОЛЬКО если он явно задан.
+  const params: Anthropic.MessageCreateParamsNonStreaming = {
+    model,
+    max_tokens: maxTokens,
+    system,
+    messages,
+  };
+  if (temperature !== undefined) {
+    params.temperature = temperature;
+  }
   return client.messages.create(
-    {
-      model,
-      max_tokens: maxTokens,
-      temperature,
-      system,
-      messages,
-    },
+    params,
     { timeout: REQUEST_TIMEOUT_MS }
   );
 }
@@ -169,7 +175,7 @@ async function callWithRetry(
   messages: Anthropic.MessageParam[],
   maxTokens: number,
   model: string,
-  temperature: number
+  temperature: number | undefined
 ): Promise<{ text: string; requestId: string | null; tokensUsed: number }> {
   let lastError: unknown;
 
@@ -226,7 +232,8 @@ export async function callClaude(input: CallClaudeInput): Promise<CallClaudeResu
 
   // Дефолты сохраняют поведение классификатора, если оверрайды не переданы.
   const model = parsed.model ?? config.CLAUDE_MODEL;
-  const temperature = parsed.temperature ?? 0;
+  // НЕ ставим дефолт 0: новые модели отклоняют temperature. Шлём только если задано явно.
+  const temperature = parsed.temperature;
 
   const cacheKey = JSON.stringify({
     system: parsed.system,

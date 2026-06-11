@@ -355,14 +355,11 @@ export async function generateMentorAnswer(input: MentorChatInput): Promise<Ment
       expectJson: false,
       maxTokens: MENTOR_MAX_TOKENS,
       model: config.AI_MENTOR_MODEL,
-      temperature: MENTOR_TEMPERATURE,
+      // temperature НЕ передаём: новые модели (opus 4.8) его отклоняют (400).
     });
     answer = typeof result === 'string' ? result.trim() : '';
   } catch (err) {
     if (err instanceof ClaudeError) {
-      const cause: unknown = (err as { cause?: unknown }).cause;
-      const causeMsg = cause instanceof Error ? cause.message : String(cause ?? '');
-      const status = (cause as { status?: number } | undefined)?.status;
       log.warn(
         {
           telegram_id: parsed.telegramId.toString(),
@@ -371,17 +368,15 @@ export async function generateMentorAnswer(input: MentorChatInput): Promise<Ment
         },
         'mentor_ai_unavailable'
       );
-      // ВРЕМЕННО: возвращаем причину как «ответ», чтобы увидеть её в чате.
-      return {
-        answer: `[DBG] ClaudeError ${err.code} status=${status ?? '?'} :: ${causeMsg.slice(0, 220)}`,
-        source,
-      };
+      throw new MentorError('ai_unavailable', 'AI-сервис недоступен, повторите позже.', {
+        cause: err,
+      });
     }
     throw err;
   }
 
   if (answer.length === 0) {
-    return { answer: '[DBG] модель вернула пустой ответ', source };
+    throw new MentorError('ai_unavailable', 'AI-сервис недоступен, повторите позже.');
   }
 
   // 8. Логируем ТОЛЬКО метаданные (без текста вопроса/ответа).
