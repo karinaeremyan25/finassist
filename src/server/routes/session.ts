@@ -68,7 +68,7 @@ export const sessionHandler: ApiHandler = async (req) => {
     };
   } catch (err) {
     if (err instanceof WebAppAuthError) {
-      return unauthorizedResponse();
+      return unauthorizedResponse(err.reason);
     }
     log.error({ err, handler: 'session', latency_ms: Date.now() - start }, 'webapp_session_error');
     throw err;

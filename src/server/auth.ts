@@ -28,11 +28,13 @@ const MAX_AGE_SECONDS = 86_400;
 
 export class WebAppAuthError extends Error {
   readonly code: 'unauthorized';
+  readonly reason: string;
 
-  constructor(message: string) {
+  constructor(message: string, reason = 'unknown') {
     super(message);
     this.name = 'WebAppAuthError';
     this.code = 'unauthorized';
+    this.reason = reason;
   }
 }
 
@@ -59,7 +61,7 @@ export function verifyInitData(initData: string): { telegramId: bigint; rawUser:
   const hash = params.get('hash');
   if (hash === null || hash.length === 0) {
     console.error(`[AUTHDBG] no_hash len=${initData.length} keys=${keyList}`);
-    throw new WebAppAuthError('Сессия не распознана');
+    throw new WebAppAuthError('Сессия не распознана', `no_hash:${keyList}`);
   }
 
   // Строим data-check-string: все пары КРОМЕ hash и signature, отсортированные по ключу.
@@ -94,7 +96,7 @@ export function verifyInitData(initData: string): { telegramId: bigint; rawUser:
 
   if (!hashesMatch) {
     console.error(`[AUTHDBG] hmac_mismatch keys=${keyList} dcsLen=${dataCheckString.length} expLen=${expectedHex.length} gotLen=${hash.length} tokenLen=${config.BOT_TOKEN.length}`);
-    throw new WebAppAuthError('Сессия не распознана');
+    throw new WebAppAuthError('Сессия не распознана', `hmac keys=[${keyList}] tok=${config.BOT_TOKEN.length}`);
   }
 
   // Проверка свежести
@@ -112,7 +114,7 @@ export function verifyInitData(initData: string): { telegramId: bigint; rawUser:
   const CLOCK_SKEW_SECONDS = 300;
   if (ageSeconds > MAX_AGE_SECONDS || ageSeconds < -CLOCK_SKEW_SECONDS) {
     console.error(`[AUTHDBG] authdate_out_of_range age=${ageSeconds}`);
-    throw new WebAppAuthError('Сессия не распознана');
+    throw new WebAppAuthError('Сессия не распознана', `authdate age=${ageSeconds}`);
   }
 
   // Парсим user
@@ -171,7 +173,7 @@ export async function resolveWebAppUser(req: ApiRequest): Promise<AppUser> {
 
   if (initData === null) {
     console.error('[AUTHDBG] no_initData_source');
-    throw new WebAppAuthError('Сессия не распознана');
+    throw new WebAppAuthError('Сессия не распознана', 'no_initdata');
   }
 
   const { telegramId } = verifyInitData(initData);
@@ -180,7 +182,7 @@ export async function resolveWebAppUser(req: ApiRequest): Promise<AppUser> {
   if (user === null || !user.isActive) {
     console.error(`[AUTHDBG] user_not_found_or_inactive tg=${telegramId.toString()}`);
     log.warn({ telegram_id: telegramId.toString() }, 'webapp_auth_denied');
-    throw new WebAppAuthError('Сессия не распознана');
+    throw new WebAppAuthError('Сессия не распознана', `usernotfound tg=${telegramId.toString()}`);
   }
   console.error(`[AUTHDBG] auth_ok tg=${telegramId.toString()}`);
 
@@ -194,9 +196,11 @@ export async function resolveWebAppUser(req: ApiRequest): Promise<AppUser> {
 
 // ── Convenience: build 401 response body ──────────────────────────────────
 
-export function unauthorizedResponse(): { status: 401; body: { error: { code: string; message: string } } } {
+export function unauthorizedResponse(reason?: string): { status: 401; body: { error: { code: string; message: string } } } {
+  // ВРЕМЕННО: добавляем reason в текст, чтобы увидеть причину прямо в приложении.
+  const message = reason ? `Сессия не распознана · ${reason}` : 'Сессия не распознана';
   return {
     status: 401,
-    body: { error: { code: 'unauthorized', message: 'Сессия не распознана' } },
+    body: { error: { code: 'unauthorized', message } },
   };
 }
