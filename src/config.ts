@@ -58,6 +58,9 @@ const ConfigSchema = z.object({
   // Точка Банк: OAuth 2.0 client_id и client_secret.
   TOCHKA_CLIENT_ID: z.string().optional(),
   TOCHKA_CLIENT_SECRET: z.string().optional(),
+  // Точка Банк: redirect_uri для authorization_code flow.
+  // Должен совпадать с Redirect URL, указанным при регистрации приложения в Точке.
+  TOCHKA_REDIRECT_URI: z.string().url().default('https://finassist-virid.vercel.app/api/tochka/callback'),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

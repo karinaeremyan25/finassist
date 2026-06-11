@@ -30,6 +30,12 @@ export interface RawSourceTransaction {
    * НЕ содержит ключей/паролей/персональных данных покупателя.
    */
   rawPayload: Record<string, unknown>;
+  /**
+   * Принудительно задать needs_classification.
+   * Если не задано — вычисляется как categoryId === null в insertSyncTransactions.
+   * Используется Точкой: other_expense с categoryId заданным, но нужна классификация.
+   */
+  needsClassification?: boolean;
 }
 
 /** Результат одного прогона синхронизации. */

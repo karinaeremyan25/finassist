@@ -34,13 +34,14 @@ function settingsKeyboard(): InlineKeyboard {
 }
 
 async function buildSettingsText(): Promise<string> {
+  // settings.value = TEXT в реальной схеме БД
   const s = await getAllSettings();
 
-  const taxPct = (s['fund_percentage_tax'] as number | undefined) ?? 6;
-  const reservePct = (s['fund_percentage_reserve'] as number | undefined) ?? 10;
-  const devPct = (s['fund_percentage_development'] as number | undefined) ?? 15;
+  const taxPct = parseFloat(s['fund_percentage_tax'] ?? '') || 6;
+  const reservePct = parseFloat(s['fund_percentage_reserve'] ?? '') || 10;
+  const devPct = parseFloat(s['fund_percentage_development'] ?? '') || 15;
   const personalPct = Math.max(0, 100 - taxPct - reservePct - devPct);
-  const threshold = (s['large_income_threshold'] as number | undefined) ?? 10_000_000;
+  const threshold = parseInt(s['large_income_threshold'] ?? '', 10) || 10_000_000;
 
   return (
     '⚙️ *Настройки FinAssist*\n\n' +
@@ -144,7 +145,8 @@ export async function handleSettingValueInput(
     return;
   }
 
-  await setSetting(key, num, ctx.user.id);
+  // value = TEXT в реальной схеме; updatedBy = telegram_id (bigint)
+  await setSetting(key, String(num), ctx.user.telegramId);
   await ctx.session.clear();
 
   await ctx.reply(`✅ *${label}* обновлено: *${text.trim()}*`, { parse_mode: 'Markdown' });

@@ -8,7 +8,18 @@ export type EntityCode = 'ip_eremyan' | 'ooo_assurgina' | 'personal';
 
 export type DirectionCode = 'course_dpo' | 'metanoia' | 'common';
 
-export type FundCode = 'tax' | 'reserve' | 'development' | 'personal';
+/**
+ * Коды фондов.
+ * Реальная схема БД (006_tochka_robokassa.sql): добавлены tax_ip, tax_ooo,
+ * reserve_ip, reserve_ooo, development_ip, development_ooo, gratitude, credit, land.
+ * Старые коды (tax, reserve, development) оставлены для обратной совместимости.
+ */
+export type FundCode =
+  | 'tax' | 'reserve' | 'development' | 'personal'
+  | 'tax_ip' | 'tax_ooo'
+  | 'reserve_ip' | 'reserve_ooo'
+  | 'development_ip' | 'development_ooo'
+  | 'gratitude' | 'credit' | 'land';
 
 export type AccountingType = 'direct' | 'operational' | 'tax' | 'personal' | 'revenue';
 

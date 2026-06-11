@@ -54,26 +54,30 @@ const FundBalanceInputSchema = z.object({
 // Helpers
 // ─────────────────────────────────────────────────────────────
 
-const DEFAULT_FUND_PERCENTAGES: Record<FundCode, number> = {
+// Проценты по умолчанию только для старых кодов.
+// Новые коды (tax_ip, tax_ooo и т.д.) не участвуют в автораспределении.
+const DEFAULT_FUND_PERCENTAGES: Partial<Record<FundCode, number>> = {
   tax: 6,
   reserve: 10,
   development: 15,
   personal: 69,
 };
 
-/** Читает процент фонда из settings, fallback к дефолту. */
+/** Читает процент фонда из settings (value = TEXT в реальной схеме), fallback к дефолту. */
 async function getFundPercentage(fundCode: FundCode): Promise<number> {
   const key = `fund_percentage_${fundCode}`;
   const val = await getSetting(key);
-  if (typeof val === 'number' && val >= 0 && val <= 100) return val;
-  return DEFAULT_FUND_PERCENTAGES[fundCode];
+  if (val !== null) {
+    const n = parseFloat(val);
+    if (!isNaN(n) && n >= 0 && n <= 100) return n;
+  }
+  return DEFAULT_FUND_PERCENTAGES[fundCode] ?? 0;
 }
 
 /** Читает порог крупного поступления (в копейках). Default: 10 000 000 (100 000 ₽). */
 async function getLargeIncomeThreshold(): Promise<bigint> {
   const val = await getSetting('large_income_threshold');
-  if (typeof val === 'number' && val > 0) return BigInt(val);
-  if (typeof val === 'string') {
+  if (val !== null) {
     const n = parseInt(val, 10);
     if (!isNaN(n) && n > 0) return BigInt(n);
   }

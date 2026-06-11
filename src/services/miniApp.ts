@@ -19,11 +19,9 @@ const DEFAULT_LOAN_TARGET_PERCENT = 10;
 const DEFAULT_FOT_TARGET_PERCENT = 30;
 
 async function getLoanTargetPercent(): Promise<number> {
+  // value = TEXT в реальной схеме settings
   const raw = await getSetting('loan_expense_target_percent');
-  if (typeof raw === 'number' && raw >= 0 && raw <= 100) {
-    return raw;
-  }
-  if (typeof raw === 'string') {
+  if (raw !== null) {
     const parsed = Number(raw);
     if (!Number.isNaN(parsed) && parsed >= 0 && parsed <= 100) {
       return parsed;

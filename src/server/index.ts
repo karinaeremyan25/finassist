@@ -11,6 +11,8 @@ import { summaryHandler, chartsHandler, insightsHandler, transactionsHandler } f
 import { usersHandler } from './routes/users.js';
 import { aiChatHandler } from './routes/aiChat.js';
 import { robokassaWebhookHandler, prodamusWebhookHandler } from './routes/webhooks.js';
+import { fundsHandler } from './routes/funds.js';
+import { tochkaCallbackHandler } from './routes/tochka.js';
 
 export function buildRouter(): Router {
   const router = new Router();
@@ -21,6 +23,10 @@ export function buildRouter(): Router {
   // Prodamus — настроить в ЛК Prodamus → Настройки → Уведомления → URL вебхука
   router.post('/api/webhooks/prodamus', prodamusWebhookHandler);
 
+  // ── Точка OAuth callback (БЕЗ Telegram-авторизации — OAuth redirect) ─────
+  // Redirect URL в кабинете разработчика Точки = TOCHKA_REDIRECT_URI
+  router.get('/api/tochka/callback', tochkaCallbackHandler);
+
   // Mini App session
   router.post('/api/webapp/session', sessionHandler);
 
@@ -29,6 +35,7 @@ export function buildRouter(): Router {
   router.get('/api/analytics/charts', chartsHandler);
   router.get('/api/analytics/insights', insightsHandler);
   router.get('/api/analytics/transactions', transactionsHandler);
+  router.get('/api/analytics/funds', fundsHandler);
 
   // Users
   router.get('/api/webapp/users', usersHandler);

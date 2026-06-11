@@ -214,8 +214,11 @@ export async function enableSource(sourceCode: SourceCode): Promise<void> {
 export interface InsertSyncTransactionsInput {
   sourceCode: SourceCode;
   transactions: RawSourceTransaction[];
-  /** UUID пользователя-создателя (служебный, owner или системный). */
-  createdBy: string;
+  /**
+   * Telegram ID создателя (BIGINT в реальной схеме БД).
+   * Реальная схема: transactions.created_by = BIGINT (telegram_id), не UUID.
+   */
+  createdBy: bigint;
   /** UUID entity — юрлицо, к которому относится источник. */
   entityId: string;
   /** UUID direction — направление (если определено из маппинга). Иначе null. */
@@ -235,8 +238,11 @@ const InsertSyncInputSchema = z.object({
     currency: z.enum(['RUB', 'USD', 'EUR', 'KZT', 'OTHER']),
     description: z.string().nullable(),
     rawPayload: z.record(z.unknown()),
+    // Опциональный override для needs_classification (используется Точкой)
+    needsClassification: z.boolean().optional(),
   })),
-  createdBy: z.string().uuid(),
+  // Реальная схема: created_by BIGINT (telegram_id), не UUID
+  createdBy: z.bigint().positive(),
   entityId: z.string().uuid(),
   directionId: z.string().uuid().nullable(),
   categoryId: z.string().uuid().nullable(),
@@ -296,6 +302,13 @@ export async function insertSyncTransactions(
       continue;
     }
 
+    // needs_classification: используем явный override из tx (если задан),
+    // иначе вычисляем по наличию category_id.
+    const needsClassification =
+      tx.needsClassification !== undefined
+        ? tx.needsClassification
+        : data.categoryId === null;
+
     const rows = await sql<{ id: string }[]>`
       INSERT INTO transactions (
         flow_type, amount, currency, amount_rub, fx_rate,
@@ -318,7 +331,7 @@ export async function insertSyncTransactions(
         ${tx.externalId},
         ${data.createdBy},
         false,
-        ${data.categoryId === null},
+        ${needsClassification},
         false,
         ${/* rawPayload — валидный JSON-объект (Zod-проверен выше); sql.json ждёт JsonValue */ sql.json(tx.rawPayload as never)}
       )

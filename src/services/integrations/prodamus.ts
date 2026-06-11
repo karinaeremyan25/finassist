@@ -9,7 +9,6 @@ import {
   getActiveProdamusMappings,
   type ProductMappingRow,
 } from '../../db/repositories/integrations.js';
-import { getAllActiveUsers } from '../../db/repositories/users.js';
 import { sql } from '../../db/client.js';
 
 /**
@@ -290,17 +289,13 @@ export async function handleProdamusWebhook(
     return { ok: false, status: 500, responseBody: 'bad sign' };
   }
 
-  const users = await getAllActiveUsers();
-  const owner = users.find((u) => u.role === 'owner');
-  if (!owner) {
-    log.warn({ source: 'prodamus' }, 'prodamus_webhook_no_owner');
-    return { ok: false, status: 500, responseBody: 'bad sign' };
-  }
+  // created_by = OWNER_TG_ID (bigint) — реальная схема БД (transactions.created_by BIGINT)
+  const createdBy: bigint = config.OWNER_TG_ID;
 
   const inserted = await insertSyncTransactions({
     sourceCode: 'prodamus',
     transactions: [tx],
-    createdBy: owner.id,
+    createdBy,
     entityId,
     directionId: mapping.directionId,
     categoryId: mapping.categoryId,

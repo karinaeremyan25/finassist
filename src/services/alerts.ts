@@ -84,8 +84,8 @@ export async function checkTaxFund(bot: Bot<BotContext>): Promise<void> {
       return;
     }
 
-    const daysBefore = await getSetting('alert_tax_days_before');
-    const alertDays = typeof daysBefore === 'number' ? daysBefore : 14;
+    const daysBeforeRaw = await getSetting('alert_tax_days_before');
+    const alertDays = daysBeforeRaw !== null ? (parseInt(daysBeforeRaw, 10) || 14) : 14;
     const days = daysUntil(nextDeadline.date);
 
     if (days > alertDays) {

@@ -101,10 +101,36 @@ export const summaryHandler: ApiHandler = async (req) => {
     const gratitudeMetrics = await getGratitudeFundMetrics(from, to);
     const topCategories = await getTopExpenseCategories(from, to, 10);
 
-    const taxFund = fundBalances.find((b) => b.code === 'tax')?.balanceKopecks ?? 0n;
-    const reserveFund = fundBalances.find((b) => b.code === 'reserve')?.balanceKopecks ?? 0n;
-    const creditFund = loanMetrics.loanAmountKopecks;
-    const gratitudeFund = gratitudeMetrics.amountKopecks;
+    // Реальные коды фондов (spec §6.2, CLAUDE.md реальная схема):
+    //   taxFund     = сумма tax_ip + tax_ooo
+    //   reserveFund = сумма reserve_ip + reserve_ooo
+    //   gratitudeFund = фонд gratitude
+    //   creditFund    = фонд credit (+ loanMetrics для совместимости)
+    const taxFund =
+      (fundBalances.find((b) => b.code === 'tax_ip')?.balanceKopecks ?? 0n) +
+      (fundBalances.find((b) => b.code === 'tax_ooo')?.balanceKopecks ?? 0n) +
+      // Fallback на старый код 'tax' (до миграции)
+      (fundBalances.find((b) => b.code === 'tax')?.balanceKopecks ?? 0n);
+
+    const reserveFund =
+      (fundBalances.find((b) => b.code === 'reserve_ip')?.balanceKopecks ?? 0n) +
+      (fundBalances.find((b) => b.code === 'reserve_ooo')?.balanceKopecks ?? 0n) +
+      // Fallback на старый код 'reserve' (до миграции)
+      (fundBalances.find((b) => b.code === 'reserve')?.balanceKopecks ?? 0n);
+
+    const gratitudeFund =
+      (fundBalances.find((b) => b.code === 'gratitude')?.balanceKopecks ?? 0n) +
+      // Fallback: из loanMetrics (старое поведение)
+      (fundBalances.find((b) => b.code === 'gratitude') === undefined
+        ? gratitudeMetrics.amountKopecks
+        : 0n);
+
+    const creditFund =
+      (fundBalances.find((b) => b.code === 'credit')?.balanceKopecks ?? 0n) +
+      // Fallback: из loanMetrics (старое поведение)
+      (fundBalances.find((b) => b.code === 'credit') === undefined
+        ? loanMetrics.loanAmountKopecks
+        : 0n);
 
     // profitFund = вычисляемый остаток (totalIncome − totalExpense − taxFund − gratitudeFund − creditFund)
     // Чтобы donut-диаграмма сходилась (mini-app-design.md §6.4)

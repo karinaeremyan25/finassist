@@ -8,7 +8,6 @@ import {
   insertSyncTransactions,
   getActiveProdamusMappings,
 } from '../../db/repositories/integrations.js';
-import { getAllActiveUsers } from '../../db/repositories/users.js';
 import { sql } from '../../db/client.js';
 
 /**
@@ -40,9 +39,26 @@ import { sql } from '../../db/client.js';
  *
  * Успешный ответ: текстовое тело "OK${InvId}" с Content-Type: text/plain, HTTP 200.
  * Неверная подпись: HTTP 400, тело "bad sign".
+ *
+ * Реальная схема БД:
+ *   transactions.created_by = BIGINT (telegram_id из config.OWNER_TG_ID)
+ *   entity_id = UUID (entities.code = 'IP', tax_type = usn_6)
+ *   source_id = UUID (sources.code = 'robokassa')
+ *   category_id = UUID (categories.code = 'prodamus_course' или по маппингу)
+ *   direction_id = UUID (directions.code = 'DPO' по умолчанию)
  */
 
 const log = childLogger({ handler: 'webhook:robokassa' });
+
+// ── Константы (реальные UUID из БД) ──────────────────────────────────────
+// Приоритет: сначала из БД по коду (динамически), константы — fallback.
+
+/** Entity ИП Еремян (УСН 6%) — для Robokassa доходов ИП. */
+const ENTITY_IP_ID = '8355ee9e-11ed-4e73-8bcd-2dc0ff3c8068';
+/** Direction ДПО — курс по умолчанию для Robokassa. */
+const DIRECTION_DPO_ID = 'b17eb69e-4bd3-441f-8a0c-57734d56840c';
+/** Category prodamus_course — онлайн-оплаты курса через Robokassa. */
+const CATEGORY_PRODAMUS_COURSE_ID = '783d4aa6-0a57-478f-93bf-ea5ad89e8f62';
 
 // ── Zod-схема входящего webhook-payload ──────────────────────────────────
 
@@ -118,7 +134,7 @@ export function verifyRobokassaSignature(
   return expected.toLowerCase() === signatureValue.toLowerCase();
 }
 
-// ── Маппинг описание → направление ───────────────────────────────────────
+// ── Маппинг описание → направление (из prodamus_product_mapping) ──────────
 
 function matchMapping(
   description: string,
@@ -145,12 +161,56 @@ function matchMapping(
   return { directionId: null, entityId: null, categoryId: null };
 }
 
+// ── Резолвинг entity_id для robokassa из БД ───────────────────────────────
+
+/**
+ * Ищет entity_id для ИП в БД по коду 'IP'.
+ * ASSUMPTION: реальная схема entities.code = 'IP' (не 'ip_eremyan').
+ * Если не найдёт по 'IP' — пробует 'ip_eremyan', затем fallback на константу.
+ */
+async function resolveEntityId(): Promise<string> {
+  // ASSUMPTION: код может быть 'IP' или 'ip_eremyan' — пробуем оба
+  const rows = await sql<{ id: string }[]>`
+    SELECT id FROM entities
+    WHERE code IN ('IP', 'ip_eremyan')
+    LIMIT 1
+  `;
+  return rows[0]?.id ?? ENTITY_IP_ID;
+}
+
+/**
+ * Ищет direction_id для DPO в БД по коду 'DPO'.
+ * ASSUMPTION: реальная схема directions.code = 'DPO' (не 'course_dpo').
+ */
+async function resolveDirectionDpoId(): Promise<string> {
+  const rows = await sql<{ id: string }[]>`
+    SELECT id FROM directions
+    WHERE code IN ('DPO', 'course_dpo')
+    LIMIT 1
+  `;
+  return rows[0]?.id ?? DIRECTION_DPO_ID;
+}
+
+/**
+ * Ищет category_id для prodamus_course в БД.
+ */
+async function resolveCategoryProdamoCourseId(): Promise<string> {
+  const rows = await sql<{ id: string }[]>`
+    SELECT id FROM categories
+    WHERE code = 'prodamus_course'
+    LIMIT 1
+  `;
+  return rows[0]?.id ?? CATEGORY_PRODAMUS_COURSE_ID;
+}
+
 // ── Обработчик webhook ────────────────────────────────────────────────────
 
 /**
  * Обрабатывает входящий Robokassa ResultURL webhook.
  * Проверяет подпись, вставляет транзакцию.
  * Возвращает тело и статус ответа.
+ *
+ * created_by = config.OWNER_TG_ID (bigint) — реальная схема БД.
  */
 export async function handleRobokassaWebhook(
   rawFields: Record<string, unknown>
@@ -195,18 +255,23 @@ export async function handleRobokassaWebhook(
     return { ok: false, status: 400, responseBody: 'bad sign' };
   }
 
-  // Дата = сегодня (МСК = UTC+3, но храним UTC YYYY-MM-DD)
+  // Дата = сегодня UTC
   const occurredAt = new Date().toISOString().slice(0, 10);
 
-  // Описание из EMail / InvId (без персональных данных — EMail в rawPayload не пишем)
-  const description = parsed.data.EMail
-    ? `Robokassa InvId=${InvId}`
-    : `Robokassa InvId=${InvId}`;
+  // Описание из InvId (без персональных данных — EMail в лог не пишем)
+  const description = `Robokassa InvId=${InvId}`;
 
-  // Маппинг через продуктовые правила (по EMail-адресу определить нельзя —
-  // пробуем по описанию, скорее всего needs_classification=true)
+  // Маппинг через продуктовые правила (по описанию попробуем сматчить)
   const mappings = await getActiveProdamusMappings();
-  const mapping = description ? matchMapping(description, mappings) : null;
+  const mapping = matchMapping(description, mappings);
+
+  // Резолвинг entity_id / direction_id / category_id (ПОСЛЕДОВАТЕЛЬНО — pgBouncer)
+  const entityId = mapping.entityId ?? (await resolveEntityId());
+  const directionId = mapping.directionId ?? (await resolveDirectionDpoId());
+  const categoryId = mapping.categoryId ?? (await resolveCategoryProdamoCourseId());
+
+  // created_by = OWNER_TG_ID (bigint) — реальная схема БД
+  const createdBy: bigint = config.OWNER_TG_ID;
 
   const tx: RawSourceTransaction = {
     externalId: `robokassa_${InvId}`,
@@ -217,38 +282,17 @@ export async function handleRobokassaWebhook(
     rawPayload: {
       invId: InvId,
       paymentMethod: parsed.data.PaymentMethod ?? null,
-      directionId: mapping?.directionId ?? null,
-      entityId: mapping?.entityId ?? null,
-      categoryId: mapping?.categoryId ?? null,
       // НЕ включаем OutSum, EMail, Fee — персональные/финансовые данные
     },
   };
 
-  // entity_id из sources.entity_id для Robokassa (ИП Еремян)
-  const entityRows = await sql<{ entity_id: string | null }[]>`
-    SELECT entity_id FROM sources WHERE code = 'robokassa' LIMIT 1
-  `;
-  const entityId = entityRows[0]?.entity_id;
-  if (!entityId) {
-    log.warn({ source: 'robokassa' }, 'robokassa_webhook_entity_id_missing');
-    return { ok: false, status: 500, responseBody: 'bad sign' };
-  }
-
-  // created_by = owner
-  const users = await getAllActiveUsers();
-  const owner = users.find((u) => u.role === 'owner');
-  if (!owner) {
-    log.warn({ source: 'robokassa' }, 'robokassa_webhook_no_owner');
-    return { ok: false, status: 500, responseBody: 'bad sign' };
-  }
-
   const inserted = await insertSyncTransactions({
     sourceCode: 'robokassa',
     transactions: [tx],
-    createdBy: owner.id,
+    createdBy,
     entityId,
-    directionId: mapping?.directionId ?? null,
-    categoryId: mapping?.categoryId ?? null,
+    directionId,
+    categoryId,
     flowType: 'income',
   });
 
