@@ -64,39 +64,36 @@ export function verifyInitData(initData: string): { telegramId: bigint; rawUser:
     throw new WebAppAuthError('Сессия не распознана', `no_hash:${keyList}`);
   }
 
-  // Строим data-check-string: все пары КРОМЕ hash и signature, отсортированные по ключу.
-  // ВАЖНО: современный Telegram добавляет поле `signature` (для альтернативной
-  // Ed25519-проверки). Его, как и `hash`, нужно исключать при сверке по bot-token,
-  // иначе HMAC не сойдётся и валидный пользователь получит 401.
-  const entries: string[] = [];
-  params.forEach((value, key) => {
-    if (key !== 'hash' && key !== 'signature') {
-      entries.push(`${key}=${value}`);
-    }
-  });
-  entries.sort();
-  const dataCheckString = entries.join('\n');
-
-  // Вычисляем ожидаемый хеш
   const secretKey = hmacSha256('WebAppData', config.BOT_TOKEN);
-  const expectedHashBuf = hmacSha256(secretKey, dataCheckString);
-  const expectedHex = expectedHashBuf.toString('hex');
 
-  // Constant-time compare
-  let hashesMatch = false;
-  try {
-    const expectedBuf = Buffer.from(expectedHex, 'hex');
-    const receivedBuf = Buffer.from(hash, 'hex');
-    hashesMatch =
-      expectedBuf.length === receivedBuf.length &&
-      timingSafeEqual(expectedBuf, receivedBuf);
-  } catch {
-    hashesMatch = false;
-  }
+  // Считаем data-check-string ДВУМЯ способами и проверяем, какой совпадёт:
+  //  A) исключаем только hash (signature остаётся в строке)
+  //  B) исключаем и hash, и signature
+  const buildDcs = (excludeSignature: boolean): string => {
+    const e: string[] = [];
+    params.forEach((value, key) => {
+      if (key === 'hash') return;
+      if (excludeSignature && key === 'signature') return;
+      e.push(`${key}=${value}`);
+    });
+    e.sort();
+    return e.join('\n');
+  };
+  const dcsA = buildDcs(false); // signature ВКЛЮЧЁН
+  const dcsB = buildDcs(true); // signature ИСКЛЮЧЁН
+  const hashA = hmacSha256(secretKey, dcsA).toString('hex');
+  const hashB = hmacSha256(secretKey, dcsB).toString('hex');
+  const recvLower = hash.toLowerCase();
+  const matchA = hashA.toLowerCase() === recvLower;
+  const matchB = hashB.toLowerCase() === recvLower;
+
+  // Используем вариант B (исключаем signature) как основной.
+  const dataCheckString = dcsB;
+  const hashesMatch = matchA || matchB;
 
   if (!hashesMatch) {
-    console.error(`[AUTHDBG] hmac_mismatch keys=${keyList} dcsLen=${dataCheckString.length} expLen=${expectedHex.length} gotLen=${hash.length} tokenLen=${config.BOT_TOKEN.length}`);
-    throw new WebAppAuthError('Сессия не распознана', `hmac keys=[${keyList}] tok=${config.BOT_TOKEN.length}`);
+    console.error(`[AUTHDBG] hmac_mismatch keys=${keyList} matchA=${matchA} matchB=${matchB} dcsBLen=${dataCheckString.length} tokenLen=${config.BOT_TOKEN.length}`);
+    throw new WebAppAuthError('Сессия не распознана', `hmac A=${matchA} B=${matchB} keys=[${keyList}] tok=${config.BOT_TOKEN.length}`);
   }
 
   // Проверка свежести

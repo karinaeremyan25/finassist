@@ -99,14 +99,17 @@ export function toVercel(handler: ApiHandler) {
     let apiRes;
     try {
       apiRes = await handler(apiReq);
-    } catch {
+    } catch (err) {
       // Обработчики бросают неперехваченные ошибки наружу (на VPS их ловит
       // src/server/http.ts). Здесь воспроизводим тот же контракт: 500 + JSON.
+      // ВРЕМЕННО: текст ошибки в сообщении для диагностики.
+      const dbg = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+      console.error(`[ADAPTER_ERR] ${dbg}`);
       res.status(500);
       res.setHeader('Content-Type', 'application/json');
       res.send(
         JSON.stringify({
-          error: { code: 'internal_error', message: 'Внутренняя ошибка сервера' },
+          error: { code: 'internal_error', message: `Внутренняя ошибка · ${dbg}`.slice(0, 300) },
         })
       );
       return;
