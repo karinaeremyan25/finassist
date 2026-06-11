@@ -60,10 +60,13 @@ export function verifyInitData(initData: string): { telegramId: bigint; rawUser:
     throw new WebAppAuthError('Сессия не распознана');
   }
 
-  // Строим data-check-string: все пары кроме hash, отсортированные по ключу
+  // Строим data-check-string: все пары КРОМЕ hash и signature, отсортированные по ключу.
+  // ВАЖНО: современный Telegram добавляет поле `signature` (для альтернативной
+  // Ed25519-проверки). Его, как и `hash`, нужно исключать при сверке по bot-token,
+  // иначе HMAC не сойдётся и валидный пользователь получит 401.
   const entries: string[] = [];
   params.forEach((value, key) => {
-    if (key !== 'hash') {
+    if (key !== 'hash' && key !== 'signature') {
       entries.push(`${key}=${value}`);
     }
   });
