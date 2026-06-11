@@ -55,8 +55,10 @@ export function verifyInitData(initData: string): { telegramId: bigint; rawUser:
 
   // Разбиваем на пары
   const params = new URLSearchParams(initData);
+  const keyList = [...params.keys()].sort().join(',');
   const hash = params.get('hash');
   if (hash === null || hash.length === 0) {
+    console.error(`[AUTHDBG] no_hash len=${initData.length} keys=${keyList}`);
     throw new WebAppAuthError('Сессия не распознана');
   }
 
@@ -91,6 +93,7 @@ export function verifyInitData(initData: string): { telegramId: bigint; rawUser:
   }
 
   if (!hashesMatch) {
+    console.error(`[AUTHDBG] hmac_mismatch keys=${keyList} dcsLen=${dataCheckString.length} expLen=${expectedHex.length} gotLen=${hash.length} tokenLen=${config.BOT_TOKEN.length}`);
     throw new WebAppAuthError('Сессия не распознана');
   }
 
@@ -108,6 +111,7 @@ export function verifyInitData(initData: string): { telegramId: bigint; rawUser:
   // иначе при утечке токена можно было бы выпустить вечную сессию.
   const CLOCK_SKEW_SECONDS = 300;
   if (ageSeconds > MAX_AGE_SECONDS || ageSeconds < -CLOCK_SKEW_SECONDS) {
+    console.error(`[AUTHDBG] authdate_out_of_range age=${ageSeconds}`);
     throw new WebAppAuthError('Сессия не распознана');
   }
 
@@ -162,7 +166,11 @@ export async function resolveWebAppUser(req: ApiRequest): Promise<AppUser> {
     }
   }
 
+  const hdrDbg = req.rawReq.headers['x-telegram-init-data'];
+  console.error(`[AUTHDBG] header_present=${typeof hdrDbg === 'string'} header_len=${typeof hdrDbg === 'string' ? hdrDbg.length : 0} resolved=${initData !== null}`);
+
   if (initData === null) {
+    console.error('[AUTHDBG] no_initData_source');
     throw new WebAppAuthError('Сессия не распознана');
   }
 
@@ -170,9 +178,11 @@ export async function resolveWebAppUser(req: ApiRequest): Promise<AppUser> {
 
   const user = await getUserByTelegramId(telegramId);
   if (user === null || !user.isActive) {
+    console.error(`[AUTHDBG] user_not_found_or_inactive tg=${telegramId.toString()}`);
     log.warn({ telegram_id: telegramId.toString() }, 'webapp_auth_denied');
     throw new WebAppAuthError('Сессия не распознана');
   }
+  console.error(`[AUTHDBG] auth_ok tg=${telegramId.toString()}`);
 
   // Отмечаем активность для экрана /users (fire-and-forget — не блокируем запрос).
   void touchUserLastSeen(telegramId).catch((err: unknown) => {
