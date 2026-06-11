@@ -87,18 +87,19 @@ export const summaryHandler: ApiHandler = async (req) => {
     }
     const { from, to, entity_id, direction_id } = parsed.data;
 
-    const [totals, fundBalances, loanMetrics, gratitudeMetrics, topCategories] = await Promise.all([
-      getSummaryTotals({
-        dateFrom: from,
-        dateTo: to,
-        entityId: entity_id ?? null,
-        directionId: direction_id ?? null,
-      }),
-      getFundBalances(),
-      getLoanExpenseMetrics(from, to),
-      getGratitudeFundMetrics(from, to),
-      getTopExpenseCategories(from, to, 10),
-    ]);
+    // Запросы СТРОГО последовательно: pgBouncer (transaction mode, порт 6543) в
+    // serverless с одним соединением зависает на параллельных запросах (Promise.all
+    // → 504 timeout). Таблицы небольшие, последовательно — быстро.
+    const totals = await getSummaryTotals({
+      dateFrom: from,
+      dateTo: to,
+      entityId: entity_id ?? null,
+      directionId: direction_id ?? null,
+    });
+    const fundBalances = await getFundBalances();
+    const loanMetrics = await getLoanExpenseMetrics(from, to);
+    const gratitudeMetrics = await getGratitudeFundMetrics(from, to);
+    const topCategories = await getTopExpenseCategories(from, to, 10);
 
     const taxFund = fundBalances.find((b) => b.code === 'tax')?.balanceKopecks ?? 0n;
     const reserveFund = fundBalances.find((b) => b.code === 'reserve')?.balanceKopecks ?? 0n;
