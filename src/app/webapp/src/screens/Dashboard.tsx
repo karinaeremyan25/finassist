@@ -5,7 +5,7 @@ import { ArrowDownLeft, ArrowUpRight, TrendingUp, Gem } from 'lucide-react';
 import { Header } from '../components/Header';
 import { SectionHeader } from '../components/AppLayout';
 import { Donut } from '../components/Donut';
-import { TransactionRow } from '../components/TransactionRow';
+import { TransactionList } from '../components/TransactionList';
 import { Skeleton, ErrorState, EmptyState } from '../components/States';
 import { useApp, useFilters } from '../state/FilterContext';
 import { useAsync } from '../lib/useAsync';
@@ -111,11 +111,7 @@ export function Dashboard() {
         ) : txs.status === 'error' ? (
           <ErrorState message={txs.error ?? undefined} onRetry={txs.reload} />
         ) : txs.data && txs.data.transactions.length > 0 ? (
-          <div className="divide-y divide-border rounded-md bg-surface-2 px-4">
-            {txs.data.transactions.map((tx) => (
-              <TransactionRow key={tx.id} tx={tx} />
-            ))}
-          </div>
+          <TransactionList transactions={txs.data.transactions} />
         ) : (
           <EmptyState />
         )}

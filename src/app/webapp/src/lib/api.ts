@@ -7,6 +7,7 @@ import { getInitData } from './telegram';
 import type {
   AiChatResponse,
   AnalyticsSummary,
+  FundsResponse,
   InsightsResponse,
   Period,
   SessionResponse,
@@ -104,6 +105,10 @@ export const api = {
 
   users(): Promise<UsersResponse> {
     return request<UsersResponse>('/api/webapp/users');
+  },
+
+  funds(): Promise<FundsResponse> {
+    return request<FundsResponse>('/api/analytics/funds');
   },
 
   aiChat(body: {

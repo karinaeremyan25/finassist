@@ -34,8 +34,37 @@ const MONTHS_FULL = [
   'Декабрь',
 ];
 
+const MONTHS_GENITIVE = [
+  'января',
+  'февраля',
+  'марта',
+  'апреля',
+  'мая',
+  'июня',
+  'июля',
+  'августа',
+  'сентября',
+  'октября',
+  'ноября',
+  'декабря',
+];
+
 function toMsk(iso: string): Date {
   return new Date(new Date(iso).getTime() + MSK_OFFSET_MS);
+}
+
+/** YYYY-MM-DD дня операции в МСК — ключ для группировки по дням. */
+export function mskDayKey(iso: string): string {
+  const d = toMsk(iso);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(
+    d.getUTCDate()
+  ).padStart(2, '0')}`;
+}
+
+/** "8 июня" — заголовок-дата для группы операций (МСК, родительный падеж). */
+export function formatDayLabel(iso: string): string {
+  const d = toMsk(iso);
+  return `${d.getUTCDate()} ${MONTHS_GENITIVE[d.getUTCMonth()]}`;
 }
 
 /** "8 июн" — короткая дата операции в МСК. */

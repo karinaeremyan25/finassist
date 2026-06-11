@@ -57,6 +57,28 @@ export interface TransactionsResponse {
   total: number;
 }
 
+export interface FundMovement {
+  /** Сумма движения, в копейках (всегда положительная; знак — из kind). */
+  amount: number;
+  description: string;
+  /** ISO-дата движения (UTC). */
+  date: string;
+  kind: 'in' | 'out';
+}
+
+export interface FundCard {
+  id: string;
+  code: string;
+  name: string;
+  /** Баланс фонда, в копейках. */
+  balance: number;
+  recentMovements: FundMovement[];
+}
+
+export interface FundsResponse {
+  funds: FundCard[];
+}
+
 export interface WebAppUser {
   telegram_id: number;
   name: string;
