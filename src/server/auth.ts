@@ -14,7 +14,7 @@
 
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { config } from '../config.js';
-import { getUserByTelegramId, touchUserLastSeen } from '../db/repositories/users.js';
+import { getUserByTelegramId, claimPendingUserByUsername, touchUserLastSeen } from '../db/repositories/users.js';
 import { childLogger } from '../utils/logger.js';
 import type { AppUser } from '../types.js';
 import type { ApiRequest } from './http.js';
@@ -131,7 +131,9 @@ export function verifyInitData(initData: string): { telegramId: bigint; rawUser:
   }
 
   const telegramId = BigInt((rawUser as Record<string, unknown>)['id'] as number);
-  return { telegramId, rawUser };
+  const rawUsername = (rawUser as Record<string, unknown>)['username'];
+  const username = typeof rawUsername === 'string' && rawUsername.length > 0 ? rawUsername : null;
+  return { telegramId, username, rawUser };
 }
 
 // ── resolveWebAppUser ──────────────────────────────────────────────────────
@@ -164,9 +166,14 @@ export async function resolveWebAppUser(req: ApiRequest): Promise<AppUser> {
     throw new WebAppAuthError('Сессия не распознана', 'no_initdata');
   }
 
-  const { telegramId } = verifyInitData(initData);
+  const { telegramId, username } = verifyInitData(initData);
 
-  const user = await getUserByTelegramId(telegramId);
+  let user = await getUserByTelegramId(telegramId);
+  // Пользователь мог быть заведён заранее по @username (admin добавил по нику) —
+  // при первом входе привязываем его telegram_id и пускаем.
+  if (user === null && username !== null) {
+    user = await claimPendingUserByUsername(telegramId, username);
+  }
   if (user === null || !user.isActive) {
     log.warn({ telegram_id: telegramId.toString() }, 'webapp_auth_denied');
     throw new WebAppAuthError('Сессия не распознана', 'user_not_found');

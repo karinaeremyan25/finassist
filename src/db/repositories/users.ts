@@ -29,6 +29,29 @@ export async function getUserByTelegramId(telegramId: bigint): Promise<AppUser |
   return row === undefined ? null : mapAppUser(row);
 }
 
+/**
+ * Привязывает telegram_id к пользователю, заведённому заранее по @username
+ * (admin добавил по нику, telegram_id ещё не известен). Вызывается при первом
+ * входе: матчим по username (без учёта регистра), проставляем telegram_id.
+ * Возвращает пользователя, если нашёлся pending-матч, иначе null.
+ */
+export async function claimPendingUserByUsername(
+  telegramId: bigint,
+  username: string
+): Promise<AppUser | null> {
+  const rows = await sql<AppUserRow[]>`
+    UPDATE app_users
+    SET telegram_id = ${telegramId}
+    WHERE lower(username) = lower(${username})
+      AND telegram_id IS NULL
+      AND is_active = true
+      AND deleted_at IS NULL
+    RETURNING id, telegram_id, COALESCE(full_name, '@' || username, '') AS full_name, role, is_active
+  `;
+  const row = rows[0];
+  return row === undefined ? null : mapAppUser(row);
+}
+
 export async function getAllActiveUsers(): Promise<AppUser[]> {
   const rows = await sql<AppUserRow[]>`
     SELECT ${SELECT_COLUMNS}
