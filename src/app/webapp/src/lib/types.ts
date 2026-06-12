@@ -25,11 +25,19 @@ export interface FundStatus {
   profitFund: number;
 }
 
+export interface DistributionSlice {
+  label: string;
+  amount: number;
+  percent: number;
+  kind: 'fund' | 'profit';
+}
+
 export interface AnalyticsSummary {
   totalIncome: number;
   totalExpense: number;
   balance: number;
   fundStatus: FundStatus;
+  distribution: DistributionSlice[];
   categoryBreakdown: Array<{ category: string; amount: number }>;
 }
 

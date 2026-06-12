@@ -16,11 +16,11 @@ import {
   getGratitudeFundMetrics,
   getTransactionList,
 } from '../../db/repositories/analytics.js';
-import { getFundBalances } from '../../db/repositories/funds.js';
+import { getFundBalances, getFundDistribution } from '../../db/repositories/funds.js';
 import { getMiniAppFinancialOverview } from '../../services/miniApp.js';
 import { childLogger } from '../../utils/logger.js';
 import type { ApiHandler, ApiResponse } from '../http.js';
-import type { AnalyticsSummary, ChartPayload } from '../../types.js';
+import type { AnalyticsSummary, ChartPayload, DistributionSlice } from '../../types.js';
 
 const log = childLogger({ handler: 'analytics' });
 
@@ -97,6 +97,7 @@ export const summaryHandler: ApiHandler = async (req) => {
       directionId: direction_id ?? null,
     });
     const fundBalances = await getFundBalances();
+    const fundDistribution = await getFundDistribution();
     const loanMetrics = await getLoanExpenseMetrics(from, to);
     const gratitudeMetrics = await getGratitudeFundMetrics(from, to);
     const topCategories = await getTopExpenseCategories(from, to, 10);
@@ -138,6 +139,22 @@ export const summaryHandler: ApiHandler = async (req) => {
       totals.totalIncomeKopecks - totals.totalExpenseKopecks - taxFund - gratitudeFund - creditFund;
     const profitFund = rawProfit < 0n ? 0n : rawProfit;
 
+    // Диаграмма «Распределение выручки»: доход × плановый % каждого фонда
+    // (система Карины: Благодарность 65%, Кредиты 10%, Налог 8%, Резерв 7%,
+    // Земля 5% = 95%), остаток — Прибыль 5%. Доли суммируются в 100%.
+    const revenue = totals.totalIncomeKopecks;
+    const distribution: DistributionSlice[] = [];
+    let allocated = 0n;
+    for (const f of fundDistribution) {
+      const amount = (revenue * BigInt(Math.round(f.percent * 100))) / 10000n;
+      allocated += amount;
+      distribution.push({ label: f.name, amount, percent: f.percent, kind: 'fund' });
+    }
+    const profitAmount = revenue > allocated ? revenue - allocated : 0n;
+    const profitPercent =
+      revenue > 0n ? Math.round((Number(profitAmount) / Number(revenue)) * 1000) / 10 : 0;
+    distribution.push({ label: 'Прибыль', amount: profitAmount, percent: profitPercent, kind: 'profit' });
+
     const summary: AnalyticsSummary = {
       totalIncome: totals.totalIncomeKopecks,
       totalExpense: totals.totalExpenseKopecks,
@@ -149,6 +166,7 @@ export const summaryHandler: ApiHandler = async (req) => {
         creditFund,
         profitFund,
       },
+      distribution,
       categoryBreakdown: topCategories.map((c) => ({
         category: c.displayName,
         amount: c.amountKopecks,
@@ -175,6 +193,7 @@ export const summaryHandler: ApiHandler = async (req) => {
       body: {
         totalIncome: 0, totalExpense: 0, balance: 0,
         fundStatus: { taxFund: 0, reserveFund: 0, gratitudeFund: 0, creditFund: 0, profitFund: 0 },
+        distribution: [],
         categoryBreakdown: [],
       },
     };

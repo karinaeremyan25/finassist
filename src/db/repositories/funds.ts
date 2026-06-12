@@ -65,6 +65,23 @@ export async function getFundBalances(_asOfDate?: string): Promise<FundBalance[]
   }));
 }
 
+/** Плановые % распределения дохода по фондам (для диаграммы на главной). */
+export interface FundDistributionRow {
+  code: string;
+  name: string;
+  percent: number;
+}
+
+export async function getFundDistribution(): Promise<FundDistributionRow[]> {
+  const rows = await sql<{ code: string; name: string; distribution_percent: number }[]>`
+    SELECT code, name, distribution_percent
+    FROM funds
+    WHERE deleted_at IS NULL AND distribution_percent IS NOT NULL AND distribution_percent > 0
+    ORDER BY distribution_percent DESC
+  `;
+  return rows.map((r) => ({ code: r.code, name: r.name, percent: Number(r.distribution_percent) }));
+}
+
 export async function createFundTransaction(data: FundTransactionCreate): Promise<void> {
   await sql`
     INSERT INTO fund_transactions (

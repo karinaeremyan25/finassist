@@ -22,37 +22,26 @@ const prefersReducedMotion =
   typeof window !== 'undefined' &&
   window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-function buildSegments(summary: AnalyticsSummary): Segment[] {
-  // Простая и понятная логика: выручка = расходы + прибыль.
-  // Без подмешивания накопленных балансов фондов (они — на вкладке «Фонды»).
-  const profit = summary.totalIncome - summary.totalExpense;
-  const segs: Segment[] = [
-    {
-      key: 'expense',
-      label: 'Расходы',
-      value: summary.totalExpense,
-      color: 'var(--chart-expense)',
-      marker: '●',
-    },
-    {
-      key: 'profit',
-      label: 'Прибыль',
-      value: profit > 0 ? profit : 0,
-      color: 'var(--chart-profit)',
-      marker: '◆',
-    },
-  ];
-  // только положительные доли, сортировка по убыванию → крупнейший на 12 часов
-  return segs.filter((s) => s.value > 0).sort((a, b) => b.value - a.value);
-}
+// Палитра для фондов (по порядку) + зелёный для прибыли.
+const FUND_COLORS = ['#38BDF8', '#FBBF24', '#94A3B8', '#A78BFA', '#F472B6', '#22D3EE'];
+const PROFIT_COLOR = '#34D399';
+const MARKERS = ['●', '■', '▲', '◆', '◇', '★', '⬟'];
 
-const RESOLVED: Record<string, string> = {
-  'var(--chart-expense)': '#FB7A6E',
-  'var(--chart-profit)': '#34D399',
-  'var(--chart-fund-cred)': '#FBBF24',
-  'var(--chart-tax)': '#94A3B8',
-  'var(--chart-fund-grat)': '#38BDF8',
-};
+function buildSegments(summary: AnalyticsSummary): Segment[] {
+  // «Распределение выручки» по системе Карины: доход × % каждого фонда
+  // (Благодарность 65%, Кредиты 10%, Налог 8%, Резерв 7%, Земля 5%) + Прибыль 5%.
+  // Доли суммируются в 100% — фонды, обязательства и прибыль в одной диаграмме.
+  let fundIdx = 0;
+  return summary.distribution
+    .filter((d) => d.amount > 0)
+    .map((d, i) => ({
+      key: `${d.kind}-${i}`,
+      label: d.label,
+      value: d.amount,
+      color: d.kind === 'profit' ? PROFIT_COLOR : FUND_COLORS[fundIdx++ % FUND_COLORS.length]!,
+      marker: MARKERS[i % MARKERS.length]!,
+    }));
+}
 
 export function Donut({ summary }: { summary: AnalyticsSummary }) {
   const [active, setActive] = useState<string | null>(null);
@@ -60,8 +49,8 @@ export function Donut({ summary }: { summary: AnalyticsSummary }) {
   const segments = buildSegments(summary);
   const total = segments.reduce((acc, s) => acc + s.value, 0) || 1;
 
-  const profit = summary.totalIncome - summary.totalExpense;
-  const marginPct = revenue > 0 ? Math.round((profit / revenue) * 100) : 0;
+  const profitSlice = summary.distribution.find((d) => d.kind === 'profit');
+  const marginPct = profitSlice ? Math.round(profitSlice.percent) : 0;
 
   const pct = (v: number): number => Math.round((v / total) * 100);
 
@@ -101,7 +90,7 @@ export function Donut({ summary }: { summary: AnalyticsSummary }) {
               {segments.map((s) => (
                 <Cell
                   key={s.key}
-                  fill={RESOLVED[s.color] ?? '#94A3B8'}
+                  fill={s.color}
                   opacity={active && active !== s.key ? 0.45 : 1}
                 />
               ))}
@@ -134,7 +123,7 @@ export function Donut({ summary }: { summary: AnalyticsSummary }) {
                 <span
                   aria-hidden="true"
                   className="num w-4 shrink-0 text-center text-[14px] leading-none"
-                  style={{ color: RESOLVED[s.color] }}
+                  style={{ color: s.color }}
                 >
                   {s.marker}
                 </span>

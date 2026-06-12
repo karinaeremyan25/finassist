@@ -273,12 +273,21 @@ export interface FundStatusPayload {
   profitFund: bigint;
 }
 
+/** Одна доля диаграммы «Распределение выручки». */
+export interface DistributionSlice {
+  label: string;
+  amount: bigint;
+  percent: number;
+  kind: 'fund' | 'profit';
+}
+
 /** Сводка аналитики (тело ответа /api/analytics/summary). */
 export interface AnalyticsSummary {
   totalIncome: bigint;
   totalExpense: bigint;
   balance: bigint;
   fundStatus: FundStatusPayload;
+  distribution: DistributionSlice[];
   categoryBreakdown: Array<{ category: string; amount: bigint }>;
 }
 
