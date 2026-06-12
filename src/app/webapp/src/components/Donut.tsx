@@ -23,8 +23,9 @@ const prefersReducedMotion =
   window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 function buildSegments(summary: AnalyticsSummary): Segment[] {
-  const { fundStatus } = summary;
-  // profitFund приходит с бэкенда как вычисляемый остаток.
+  // Простая и понятная логика: выручка = расходы + прибыль.
+  // Без подмешивания накопленных балансов фондов (они — на вкладке «Фонды»).
+  const profit = summary.totalIncome - summary.totalExpense;
   const segs: Segment[] = [
     {
       key: 'expense',
@@ -36,30 +37,9 @@ function buildSegments(summary: AnalyticsSummary): Segment[] {
     {
       key: 'profit',
       label: 'Прибыль',
-      value: fundStatus.profitFund,
+      value: profit > 0 ? profit : 0,
       color: 'var(--chart-profit)',
       marker: '◆',
-    },
-    {
-      key: 'cred',
-      label: 'Фонд «Кредиты»',
-      value: fundStatus.creditFund,
-      color: 'var(--chart-fund-cred)',
-      marker: '■',
-    },
-    {
-      key: 'tax',
-      label: 'Налоги',
-      value: fundStatus.taxFund,
-      color: 'var(--chart-tax)',
-      marker: '▲',
-    },
-    {
-      key: 'grat',
-      label: 'Фонд «Благодарность»',
-      value: fundStatus.gratitudeFund,
-      color: 'var(--chart-fund-grat)',
-      marker: '◇',
     },
   ];
   // только положительные доли, сортировка по убыванию → крупнейший на 12 часов
@@ -80,8 +60,8 @@ export function Donut({ summary }: { summary: AnalyticsSummary }) {
   const segments = buildSegments(summary);
   const total = segments.reduce((acc, s) => acc + s.value, 0) || 1;
 
-  const marginPct =
-    revenue > 0 ? Math.round((summary.fundStatus.profitFund / revenue) * 100) : 0;
+  const profit = summary.totalIncome - summary.totalExpense;
+  const marginPct = revenue > 0 ? Math.round((profit / revenue) * 100) : 0;
 
   const pct = (v: number): number => Math.round((v / total) * 100);
 
