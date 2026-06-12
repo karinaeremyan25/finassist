@@ -13,6 +13,8 @@ import { aiChatHandler } from './routes/aiChat.js';
 import { robokassaWebhookHandler, prodamusWebhookHandler } from './routes/webhooks.js';
 import { fundsHandler } from './routes/funds.js';
 import { tochkaCallbackHandler } from './routes/tochka.js';
+import { adminUsersHandler } from './routes/admin.js';
+import { planHandler } from './routes/plan.js';
 
 export function buildRouter(): Router {
   const router = new Router();
@@ -43,6 +45,16 @@ export function buildRouter(): Router {
   // AI chat (two paths per spec)
   router.post('/api/ai-chat', aiChatHandler);
   router.post('/api/webapp/ai/chat', aiChatHandler);
+
+  // Admin: управление пользователями (owner-only, все методы в одном handler)
+  router.add('GET',    '/api/admin/users', adminUsersHandler);
+  router.add('POST',   '/api/admin/users', adminUsersHandler);
+  router.add('PATCH',  '/api/admin/users', adminUsersHandler);
+  router.add('DELETE', '/api/admin/users', adminUsersHandler);
+
+  // Plan/fact по месяцам
+  router.get('/api/analytics/plan', planHandler);
+  router.post('/api/analytics/plan', planHandler);
 
   return router;
 }

@@ -133,3 +133,162 @@ export async function setUserActive(userId: string, isActive: boolean): Promise<
     throw new Error(`setUserActive: user ${userId} not found`);
   }
 }
+
+// ── Admin-only functions ───────────────────────────────────────────────────
+
+/**
+ * Все пользователи для экрана администратора — включая неактивных и pending
+ * (telegram_id IS NULL), кроме физически удалённых (deleted_at IS NOT NULL).
+ * Поле pending: true если telegram_id ещё не привязан.
+ */
+export interface AdminUserRow {
+  id: string;
+  username: string | null;
+  fullName: string | null;
+  role: string;
+  isActive: boolean;
+  telegramId: bigint | null;
+  lastSeen: Date | null;
+  pending: boolean;
+}
+
+export async function getAllUsersForAdmin(): Promise<AdminUserRow[]> {
+  const rows = await sql<{
+    id: string;
+    username: string | null;
+    full_name: string | null;
+    role: string;
+    is_active: boolean;
+    telegram_id: bigint | null;
+    last_seen: Date | null;
+  }[]>`
+    SELECT id, username, full_name, role, is_active, telegram_id, last_seen
+    FROM app_users
+    WHERE deleted_at IS NULL
+    ORDER BY created_at ASC
+  `;
+  return rows.map((r) => ({
+    id: r.id,
+    username: r.username,
+    fullName: r.full_name,
+    role: r.role,
+    isActive: r.is_active,
+    telegramId: r.telegram_id,
+    lastSeen: r.last_seen,
+    pending: r.telegram_id === null,
+  }));
+}
+
+export interface AddPendingUserData {
+  username: string;
+  role: 'owner' | 'accountant' | 'manager';
+}
+
+/**
+ * Добавляет pending-пользователя по @username (telegram_id = NULL).
+ * Возвращает созданного пользователя.
+ */
+export async function addPendingUser(data: AddPendingUserData): Promise<AdminUserRow> {
+  const rows = await sql<{
+    id: string;
+    username: string | null;
+    full_name: string | null;
+    role: string;
+    is_active: boolean;
+    telegram_id: bigint | null;
+    last_seen: Date | null;
+  }[]>`
+    INSERT INTO app_users (username, role, is_active)
+    VALUES (${data.username}, ${data.role}, true)
+    RETURNING id, username, full_name, role, is_active, telegram_id, last_seen
+  `;
+  const row = rows[0];
+  if (row === undefined) {
+    throw new Error('addPendingUser: INSERT did not return a row');
+  }
+  return {
+    id: row.id,
+    username: row.username,
+    fullName: row.full_name,
+    role: row.role,
+    isActive: row.is_active,
+    telegramId: row.telegram_id,
+    lastSeen: row.last_seen,
+    pending: row.telegram_id === null,
+  };
+}
+
+export interface UpdateUserData {
+  id: string;
+  isActive?: boolean;
+  role?: string;
+}
+
+/**
+ * Обновляет роль и/или статус пользователя. Возвращает обновлённую строку.
+ */
+export async function updateUserRoleActive(data: UpdateUserData): Promise<AdminUserRow> {
+  const rows = await sql<{
+    id: string;
+    username: string | null;
+    full_name: string | null;
+    role: string;
+    is_active: boolean;
+    telegram_id: bigint | null;
+    last_seen: Date | null;
+  }[]>`
+    UPDATE app_users
+    SET role      = COALESCE(${data.role ?? null}, role),
+        is_active = COALESCE(${data.isActive ?? null}, is_active),
+        updated_at = NOW()
+    WHERE id = ${data.id}
+      AND deleted_at IS NULL
+    RETURNING id, username, full_name, role, is_active, telegram_id, last_seen
+  `;
+  const row = rows[0];
+  if (row === undefined) {
+    throw new Error(`updateUserRoleActive: user ${data.id} not found`);
+  }
+  return {
+    id: row.id,
+    username: row.username,
+    fullName: row.full_name,
+    role: row.role,
+    isActive: row.is_active,
+    telegramId: row.telegram_id,
+    lastSeen: row.last_seen,
+    pending: row.telegram_id === null,
+  };
+}
+
+/**
+ * Soft-delete: проставляет deleted_at=NOW() и is_active=false.
+ */
+export async function softDeleteUser(userId: string): Promise<void> {
+  const rows = await sql<{ id: string }[]>`
+    UPDATE app_users
+    SET deleted_at = NOW(),
+        is_active  = false,
+        updated_at = NOW()
+    WHERE id = ${userId}
+      AND deleted_at IS NULL
+    RETURNING id
+  `;
+  if (rows[0] === undefined) {
+    throw new Error(`softDeleteUser: user ${userId} not found or already deleted`);
+  }
+}
+
+/**
+ * Считает активных owner-ов (для защиты «нельзя убрать последнего owner»).
+ */
+export async function countActiveOwners(): Promise<number> {
+  const rows = await sql<{ cnt: string }[]>`
+    SELECT COUNT(*)::text AS cnt
+    FROM app_users
+    WHERE role = 'owner'
+      AND is_active = true
+      AND deleted_at IS NULL
+  `;
+  return parseInt(rows[0]?.cnt ?? '0', 10);
+}
