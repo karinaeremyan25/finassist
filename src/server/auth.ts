@@ -50,7 +50,7 @@ function hmacSha256(key: Buffer | string, data: string): Buffer {
  * Проверяет подпись initData и свежесть auth_date.
  * Возвращает telegram_id пользователя или бросает WebAppAuthError.
  */
-export function verifyInitData(initData: string): { telegramId: bigint; rawUser: unknown } {
+export function verifyInitData(initData: string): { telegramId: bigint; username: string | null; rawUser: unknown } {
   if (initData.trim().length === 0) {
     throw new WebAppAuthError('Сессия не распознана');
   }
