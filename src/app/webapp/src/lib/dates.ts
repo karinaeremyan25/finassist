@@ -94,6 +94,19 @@ export function currentMonthFrom(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
 }
 
+/** YYYY-MM текущего месяца в МСК (UTC+3) — для /api/analytics/plan. */
+export function currentMonthYm(): string {
+  const msk = new Date(Date.now() + MSK_OFFSET_MS);
+  return `${msk.getUTCFullYear()}-${String(msk.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+/** "Июнь 2026" — из YYYY-MM. */
+export function formatYmLabel(ym: string): string {
+  const [y, m] = ym.split('-').map((s) => Number(s));
+  const idx = (m ?? 1) - 1;
+  return `${MONTHS_FULL[idx] ?? ''} ${y ?? ''}`.trim();
+}
+
 /** YYYY-MM-DD сегодня. */
 export function today(): string {
   const d = new Date();

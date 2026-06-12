@@ -100,3 +100,50 @@ export interface Period {
   from: string;
   to: string;
 }
+
+// ── Админка: управление пользователями (/api/admin/users) ───────────────────
+
+export type AdminRole = 'owner' | 'accountant' | 'manager';
+
+export interface AdminUser {
+  id: string;
+  username: string | null;
+  fullName: string | null;
+  role: AdminRole;
+  isActive: boolean;
+  /** bigint с бэка приходит строкой, чтобы не терять точность. */
+  telegramId: string | null;
+  lastSeen: string | null;
+  pending: boolean;
+}
+
+export interface AdminListResponse {
+  users: AdminUser[];
+}
+
+export interface AdminUserResponse {
+  user: AdminUser;
+}
+
+export interface AdminDeleteResponse {
+  success: boolean;
+}
+
+// ── План / Факт (/api/analytics/plan) ───────────────────────────────────────
+
+export interface PlanLine {
+  /** Копейки. null — план не задан. */
+  min: number | null;
+  avg: number | null;
+  max: number | null;
+  /** Факт за месяц, копейки. */
+  actual: number;
+  /** actual / min * 100, 1 знак. null если min не задан. */
+  pctOfMin: number | null;
+}
+
+export interface PlanResponse {
+  yearMonth: string;
+  income: PlanLine;
+  expense: PlanLine;
+}

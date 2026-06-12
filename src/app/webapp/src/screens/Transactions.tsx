@@ -63,7 +63,14 @@ export function Transactions() {
         ) : txs.data && txs.data.transactions.length > 0 ? (
           <TransactionList transactions={txs.data.transactions} />
         ) : (
-          <EmptyState />
+          <EmptyState
+            title="Нет операций за период"
+            hint={
+              entity_id !== null || direction_id !== null
+                ? 'По выбранному юрлицу/направлению за этот период операций нет. Измените фильтр или период.'
+                : 'Добавьте выписку или выберите другой период.'
+            }
+          />
         )}
       </section>
     </>

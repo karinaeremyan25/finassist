@@ -5,17 +5,17 @@ import { ArrowDownLeft, ArrowUpRight, TrendingUp, Gem } from 'lucide-react';
 import { Header } from '../components/Header';
 import { SectionHeader } from '../components/AppLayout';
 import { Donut } from '../components/Donut';
+import { PlanProgress } from '../components/PlanProgress';
 import { TransactionList } from '../components/TransactionList';
 import { Skeleton, ErrorState, EmptyState } from '../components/States';
-import { useApp, useFilters } from '../state/FilterContext';
+import { useFilters } from '../state/FilterContext';
 import { useAsync } from '../lib/useAsync';
 import { api } from '../lib/api';
 import { rubles, rublesCompact } from '../lib/money';
-import { formatMonthLabel } from '../lib/dates';
+import { currentMonthYm, formatMonthLabel, formatYmLabel } from '../lib/dates';
 
 export function Dashboard() {
   const { period, entity_id, direction_id } = useFilters();
-  const { session } = useApp();
   const filters = { entity_id, direction_id };
 
   const summary = useAsync(
@@ -30,6 +30,17 @@ export function Dashboard() {
     () => api.transactions(period, filters, 5, 0),
     [period.from, period.to, entity_id, direction_id]
   );
+  // План — всегда по текущему месяцу МСК (не зависит от выбранного периода).
+  const planMonth = currentMonthYm();
+  const plan = useAsync(() => api.plan(planMonth), [planMonth]);
+
+  // Признак «нет данных за период по выбранному юрлицу/направлению».
+  const summaryEmpty =
+    summary.status === 'success' &&
+    summary.data !== null &&
+    summary.data.totalIncome === 0 &&
+    summary.data.totalExpense === 0;
+  const hasFilter = entity_id !== null || direction_id !== null;
 
   return (
     <>
@@ -45,6 +56,37 @@ export function Dashboard() {
           </div>
         ) : summary.data ? (
           <BalanceBlock data={summary.data} />
+        ) : null}
+      </section>
+
+      {/* Пусто по выбранному юрлицу/направлению за период */}
+      {summaryEmpty ? (
+        <section className="mt-4 px-4">
+          <div className="rounded-lg bg-surface-2 p-1">
+            <EmptyState
+              title="Нет данных за период"
+              hint={
+                hasFilter
+                  ? 'По выбранному юрлицу/направлению за этот период операций нет. Измените фильтр или период.'
+                  : 'За выбранный период операций нет. Добавьте выписку или выберите другой период.'
+              }
+            />
+          </div>
+        </section>
+      ) : null}
+
+      {/* План на месяц */}
+      <section className="mt-6 px-4">
+        <SectionHeader
+          title="План на месяц"
+          right={<span className="num">{formatYmLabel(planMonth)}</span>}
+        />
+        {plan.status === 'loading' ? (
+          <Skeleton className="h-28 w-full rounded-md" />
+        ) : plan.status === 'error' ? (
+          <ErrorState message={plan.error ?? undefined} onRetry={plan.reload} />
+        ) : plan.data ? (
+          <PlanProgress data={plan.data} />
         ) : null}
       </section>
 
@@ -116,8 +158,6 @@ export function Dashboard() {
           <EmptyState />
         )}
       </section>
-
-      {session ? null : null}
     </>
   );
 }

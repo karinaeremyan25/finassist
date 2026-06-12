@@ -5,11 +5,15 @@
 
 import { getInitData } from './telegram';
 import type {
+  AdminDeleteResponse,
+  AdminListResponse,
+  AdminUserResponse,
   AiChatResponse,
   AnalyticsSummary,
   FundsResponse,
   InsightsResponse,
   Period,
+  PlanResponse,
   SessionResponse,
   TransactionsResponse,
   UsersResponse,
@@ -121,6 +125,42 @@ export const api = {
     return request<AiChatResponse>('/api/ai-chat', {
       method: 'POST',
       body: JSON.stringify(body),
+    });
+  },
+
+  /** План/факт за месяц (YYYY-MM). По умолчанию — текущий месяц МСК. */
+  plan(month?: string): Promise<PlanResponse> {
+    const q = month ? `?month=${encodeURIComponent(month)}` : '';
+    return request<PlanResponse>(`/api/analytics/plan${q}`);
+  },
+
+  // ── Админка: управление пользователями (только owner) ────────────────────
+
+  adminListUsers(): Promise<AdminListResponse> {
+    return request<AdminListResponse>('/api/admin/users');
+  },
+
+  adminAddUser(username: string, role?: string): Promise<AdminUserResponse> {
+    return request<AdminUserResponse>('/api/admin/users', {
+      method: 'POST',
+      body: JSON.stringify(role ? { username, role } : { username }),
+    });
+  },
+
+  adminUpdateUser(
+    id: string,
+    patch: { isActive?: boolean; role?: string }
+  ): Promise<AdminUserResponse> {
+    return request<AdminUserResponse>('/api/admin/users', {
+      method: 'PATCH',
+      body: JSON.stringify({ id, ...patch }),
+    });
+  },
+
+  adminDeleteUser(id: string): Promise<AdminDeleteResponse> {
+    return request<AdminDeleteResponse>('/api/admin/users', {
+      method: 'DELETE',
+      body: JSON.stringify({ id }),
     });
   },
 };
