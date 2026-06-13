@@ -12,7 +12,7 @@ import { Skeleton, ErrorState, EmptyState } from '../components/States';
 import { useFilters } from '../state/FilterContext';
 import { useAsync } from '../lib/useAsync';
 import { api } from '../lib/api';
-import { rubles, rublesCompact } from '../lib/money';
+import { rubles } from '../lib/money';
 import { currentMonthYm, formatMonthLabel, formatYmLabel } from '../lib/dates';
 
 export function Dashboard() {
@@ -229,9 +229,9 @@ function KpiCard({
           {label}
         </span>
       </div>
-      <p className="num text-[20px] font-semibold" style={{ color }}>
+      <p className="num text-[17px] font-semibold leading-tight" style={{ color }}>
         {sign}
-        {rublesCompact(value)}
+        {rubles(value)}
       </p>
     </div>
   );
