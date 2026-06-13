@@ -42,13 +42,13 @@ export const sessionHandler: ApiHandler = async (req) => {
     `;
 
     const period = getCurrentMonthPeriod();
-    // Дефолтный период по умолчанию расширяем НАЗАД на прошлый месяц (с 1-го числа
-    // прошлого месяца по сегодня), чтобы недавно загруженные операции прошлого
-    // месяца сразу были видны на дашборде, а не только текущий (часто пустой) месяц.
-    const fromDate = new Date(`${period.dateFrom}T00:00:00Z`);
-    fromDate.setUTCMonth(fromDate.getUTCMonth() - 1);
-    fromDate.setUTCDate(1);
-    const defaultFrom = fromDate.toISOString().slice(0, 10);
+    // Дефолтный период = ТЕКУЩИЙ месяц целиком: с 1-го числа по конец месяца.
+    // Так наверху всегда факт за текущий месяц (как в отчёте бухгалтера), без
+    // подмешивания прошлого месяца. Период можно сменить фильтром вручную.
+    const base = new Date(`${period.dateFrom}T00:00:00Z`);
+    const defaultFrom = period.dateFrom;
+    const endOfMonth = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth() + 1, 0));
+    const defaultTo = endOfMonth.toISOString().slice(0, 10);
 
     log.info(
       {
@@ -69,7 +69,7 @@ export const sessionHandler: ApiHandler = async (req) => {
         },
         entities: entityRows.map((e) => ({ id: e.id, name: e.display_name })),
         availableDirections: directionRows.map((d) => ({ id: d.id, name: d.display_name })),
-        defaultPeriod: { from: defaultFrom, to: period.dateTo },
+        defaultPeriod: { from: defaultFrom, to: defaultTo },
         features: ['analytics', 'transactions', 'users'],
       },
     };
