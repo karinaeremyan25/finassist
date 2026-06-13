@@ -13,8 +13,13 @@ import type {
   FundsResponse,
   InsightsResponse,
   Period,
+  PersonalSpendingResponse,
   PlanResponse,
+  PnlEntity,
+  PnlResponse,
+  PnlYearResponse,
   SessionResponse,
+  SetTxCategoryResponse,
   TransactionsResponse,
   UsersResponse,
 } from './types';
@@ -132,6 +137,34 @@ export const api = {
   plan(month?: string): Promise<PlanResponse> {
     const q = month ? `?month=${encodeURIComponent(month)}` : '';
     return request<PlanResponse>(`/api/analytics/plan${q}`);
+  },
+
+  // ── P&L (/api/analytics/pnl*) ────────────────────────────────────────────
+
+  /** P&L за месяц (YYYY-MM) по юрлицу/сводный. Суммы — копейки. */
+  pnl(entity: PnlEntity, period: string): Promise<PnlResponse> {
+    const q = new URLSearchParams({ entity, period }).toString();
+    return request<PnlResponse>(`/api/analytics/pnl?${q}`);
+  },
+
+  /** Годовой P&L помесячно. */
+  pnlYear(entity: PnlEntity, year: number): Promise<PnlYearResponse> {
+    const q = new URLSearchParams({ entity, year: String(year) }).toString();
+    return request<PnlYearResponse>(`/api/analytics/pnl/year?${q}`);
+  },
+
+  /** Личные траты собственника за месяц (YYYY-MM). */
+  personalSpending(period: string): Promise<PersonalSpendingResponse> {
+    const q = new URLSearchParams({ period }).toString();
+    return request<PersonalSpendingResponse>(`/api/analytics/personal-spending?${q}`);
+  },
+
+  /** Ручное исправление категории транзакции бухгалтером. */
+  setTxCategory(id: string, category: string): Promise<SetTxCategoryResponse> {
+    return request<SetTxCategoryResponse>('/api/analytics/transactions/category', {
+      method: 'PATCH',
+      body: JSON.stringify({ id, category }),
+    });
   },
 
   // ── Админка: управление пользователями (только owner) ────────────────────

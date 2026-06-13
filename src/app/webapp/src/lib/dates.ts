@@ -107,6 +107,23 @@ export function formatYmLabel(ym: string): string {
   return `${MONTHS_FULL[idx] ?? ''} ${y ?? ''}`.trim();
 }
 
+/** Сдвиг YYYY-MM на delta месяцев (±). */
+export function shiftYm(ym: string, delta: number): string {
+  const [y, m] = ym.split('-').map((s) => Number(s));
+  const base = new Date(Date.UTC(y ?? 2026, (m ?? 1) - 1 + delta, 1));
+  return `${base.getUTCFullYear()}-${String(base.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+/** "Май 2026" — короткий ярлык месяц+год из YYYY-MM (для селектора периода). */
+export function formatYmShort(ym: string): string {
+  return formatYmLabel(ym);
+}
+
+/** Текущий год в МСК. */
+export function currentYear(): number {
+  return new Date(Date.now() + MSK_OFFSET_MS).getUTCFullYear();
+}
+
 /** YYYY-MM-DD сегодня. */
 export function today(): string {
   const d = new Date();

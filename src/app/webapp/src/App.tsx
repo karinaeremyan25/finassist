@@ -5,6 +5,7 @@ import { ErrorState, Skeleton } from './components/States';
 import { Dashboard } from './screens/Dashboard';
 import { Transactions } from './screens/Transactions';
 import { Funds } from './screens/Funds';
+import { PnL } from './screens/PnL';
 import { Users } from './screens/Users';
 import { Settings } from './screens/Settings';
 import { Chat } from './screens/Chat';
@@ -38,6 +39,7 @@ function Gate() {
       <Routes>
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/transactions" element={<Transactions />} />
+        <Route path="/pnl" element={<PnL />} />
         <Route path="/funds" element={<Funds />} />
         <Route path="/users" element={<Users />} />
         <Route path="/settings" element={<Settings />} />

@@ -1,7 +1,7 @@
-/** Нижняя навигация (§7.6): 4 пункта, активная вкладка подсвечена --accent. */
+/** Нижняя навигация (§7.6): 5 пунктов, активная вкладка подсвечена --accent. */
 
 import { NavLink } from 'react-router-dom';
-import { Home, BarChart3, Landmark, MessageCircle } from 'lucide-react';
+import { Home, BarChart3, TrendingUp, Landmark, MessageCircle } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { hapticSelection } from '../lib/telegram';
 
@@ -14,6 +14,7 @@ interface Tab {
 const TABS: Tab[] = [
   { to: '/dashboard', label: 'Главная', icon: Home },
   { to: '/transactions', label: 'Отчёты', icon: BarChart3 },
+  { to: '/pnl', label: 'P&L', icon: TrendingUp },
   { to: '/funds', label: 'Фонды', icon: Landmark },
   { to: '/chat', label: 'Чат', icon: MessageCircle },
 ];
@@ -33,7 +34,7 @@ export function BottomNav() {
                 to={tab.to}
                 onClick={() => hapticSelection()}
                 className={({ isActive }) =>
-                  `flex h-full min-h-[44px] flex-col items-center justify-center gap-1 ${
+                  `flex h-full min-h-[44px] flex-col items-center justify-center gap-1 px-0.5 ${
                     isActive ? 'text-accent' : 'text-ink-faint'
                   }`
                 }
@@ -41,11 +42,11 @@ export function BottomNav() {
                 {({ isActive }) => (
                   <>
                     <Icon
-                      size={22}
+                      size={20}
                       strokeWidth={2}
                       style={isActive ? { filter: 'drop-shadow(0 0 8px rgba(45,212,191,0.5))' } : undefined}
                     />
-                    <span className="text-[11px] font-medium">{tab.label}</span>
+                    <span className="text-[10px] font-medium leading-none">{tab.label}</span>
                   </>
                 )}
               </NavLink>

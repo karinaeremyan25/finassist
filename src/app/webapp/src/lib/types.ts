@@ -155,3 +155,94 @@ export interface PlanResponse {
   income: PlanLine;
   expense: PlanLine;
 }
+
+// ── P&L (/api/analytics/pnl, .../pnl/year, .../personal-spending) ────────────
+
+export type PnlEntity = 'ip' | 'ooo' | 'total';
+
+/** Источники дохода (копейки). Все поля опциональны — может не быть данных. */
+export interface PnlIncomeSources {
+  prodamus?: number;
+  robokassa?: number;
+  tochka_direct?: number;
+}
+
+/** Разбивка бизнес-расходов (копейки). Все поля опциональны. */
+export interface PnlExpenseBreakdown {
+  payroll?: number;
+  marketing?: number;
+  tax?: number;
+  subscriptions?: number;
+  loan?: number;
+  other_business?: number;
+  /** Комиссии платёжек — спека упоминает, бэк может присылать. */
+  payment_commission?: number;
+}
+
+export interface PnlResponse {
+  entity: PnlEntity;
+  period: string; // YYYY-MM
+  income: {
+    /** Копейки. */
+    total: number;
+    sources: PnlIncomeSources;
+  };
+  expenses: {
+    /** Копейки. */
+    total: number;
+    breakdown: PnlExpenseBreakdown;
+  };
+  /** Чистая прибыль бизнеса, копейки. */
+  profit: number;
+  /** Маржа, проценты (например 55.4). */
+  margin_pct: number;
+  vs_prev_month: {
+    income_delta_pct: number;
+    profit_delta_pct: number;
+  };
+}
+
+export interface PnlYearMonth {
+  month: string; // YYYY-MM
+  income: number;
+  expenses: number;
+  profit: number;
+  margin_pct: number;
+}
+
+export interface PnlYearResponse {
+  entity: PnlEntity;
+  year: number;
+  months: PnlYearMonth[];
+  totals: {
+    income: number;
+    expenses: number;
+    profit: number;
+    margin_pct: number;
+  };
+}
+
+export interface PersonalSpendingCategory {
+  code: string;
+  label: string;
+  /** Копейки. */
+  amount: number;
+  /** Доля от итога, проценты. */
+  pct: number;
+  vs_prev_month_pct: number;
+}
+
+export interface PersonalSpendingResponse {
+  period: string; // YYYY-MM
+  /** Копейки. */
+  total: number;
+  vs_prev_month_pct: number;
+  categories: PersonalSpendingCategory[];
+}
+
+export interface SetTxCategoryResponse {
+  id: string;
+  category: string;
+  needs_review: boolean;
+  category_overridden_at: string;
+}

@@ -6,6 +6,7 @@ import { Header } from '../components/Header';
 import { SectionHeader } from '../components/AppLayout';
 import { Donut } from '../components/Donut';
 import { PlanProgress } from '../components/PlanProgress';
+import { PersonalSpendCard } from '../components/PersonalSpendCard';
 import { TransactionList } from '../components/TransactionList';
 import { Skeleton, ErrorState, EmptyState } from '../components/States';
 import { useFilters } from '../state/FilterContext';
@@ -108,6 +109,11 @@ export function Dashboard() {
             <EmptyState hint="Нет выручки за период — диаграмма скрыта." />
           )
         ) : null}
+      </section>
+
+      {/* Личные траты собственника */}
+      <section className="mt-6 px-4">
+        <PersonalSpendCard />
       </section>
 
       {/* Инсайты */}
