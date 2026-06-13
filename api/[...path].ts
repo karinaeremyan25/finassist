@@ -64,7 +64,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   const apiHandler = router.find(method, path);
   if (apiHandler === null) {
     res.status(404).setHeader('Content-Type', 'application/json');
-    res.send(JSON.stringify({ error: { code: 'not_found', message: 'Маршрут не найден' } }));
+    // ВРЕМЕННО: показываем, какой method/path/url пришёл в функцию.
+    res.send(JSON.stringify({ error: { code: 'not_found', message: 'Маршрут не найден' }, dbg: { method, path, rawUrl } }));
     return;
   }
 
