@@ -25,8 +25,11 @@ import { config } from '../config.js';
 const isServerless = process.env['VERCEL'] === '1';
 
 export const sql = postgres(config.DATABASE_URL, {
-  // В serverless — одно соединение на инвокацию; на VPS — полноценный пул.
-  max: isServerless ? 1 : 10,
+  // В serverless теперь ВСЕ /api/* идут через одну функцию (router), и дашборд
+  // шлёт несколько запросов параллельно. С max:1 они сериализовались на одном
+  // соединении и тяжёлый запрос (инсайты) блокировал остальные карточки → «висели».
+  // max:5 даёт одной инвокации обрабатывать параллельные запросы; pgBouncer пулит.
+  max: isServerless ? 5 : 10,
   idle_timeout: 20,
   connect_timeout: 10,
   // pgBouncer (transaction mode, порт 6543) несовместим с prepared statements.
