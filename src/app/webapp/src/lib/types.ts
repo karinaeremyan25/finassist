@@ -57,7 +57,16 @@ export interface TransactionItem {
   /** Сумма со знаком, в копейках (доход +, расход −). */
   amount: number;
   direction: string | null;
+  /** Человекочитаемое имя категории (display_name или flow_type). */
   category: string;
+  /** Контрагент операции. */
+  counterparty: string | null;
+  /** Код P&L-категории (для выпадающего списка смены категории). */
+  pnlCategory: string | null;
+  /** Личная операция (true) или бизнес. */
+  isPersonal: boolean;
+  /** Категория под вопросом — требует ручной проверки. */
+  needsReview: boolean;
 }
 
 export interface TransactionsResponse {

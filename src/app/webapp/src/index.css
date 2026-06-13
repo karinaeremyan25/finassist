@@ -91,6 +91,18 @@ body {
   border: 0;
 }
 
+/* Bottom sheet — выезд снизу (детали операции) */
+@keyframes sheet-up {
+  from {
+    transform: translateY(100%);
+    opacity: 0.6;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
 /* Shimmer для skeleton */
 @keyframes shimmer {
   0% {

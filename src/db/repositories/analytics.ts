@@ -467,6 +467,10 @@ export interface TransactionListItem {
   flowType: string;
   directionName: string | null;
   categoryName: string | null;
+  counterparty: string | null;
+  pnlCategory: string | null;
+  isPersonal: boolean;
+  needsReview: boolean;
 }
 
 export interface TransactionListResult {
@@ -496,6 +500,10 @@ export async function getTransactionList(
     flow_type: string;
     direction_name: string | null;
     category_name: string | null;
+    counterparty: string | null;
+    pnl_category: string | null;
+    is_personal: boolean;
+    needs_review: boolean;
   }[]>`
     SELECT
       t.id,
@@ -504,7 +512,11 @@ export async function getTransactionList(
       t.amount_rub,
       t.flow_type,
       d.display_name AS direction_name,
-      c.display_name AS category_name
+      c.display_name AS category_name,
+      t.counterparty,
+      t.pnl_category,
+      t.is_personal,
+      t.needs_review
     FROM transactions t
     LEFT JOIN directions d ON d.id = t.direction_id
     LEFT JOIN categories c ON c.id = t.category_id
@@ -538,6 +550,10 @@ export async function getTransactionList(
       flowType: row.flow_type,
       directionName: row.direction_name,
       categoryName: row.category_name,
+      counterparty: row.counterparty,
+      pnlCategory: row.pnl_category,
+      isPersonal: row.is_personal,
+      needsReview: row.needs_review,
     })),
     total,
   };

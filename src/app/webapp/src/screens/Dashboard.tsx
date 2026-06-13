@@ -159,7 +159,7 @@ export function Dashboard() {
         ) : txs.status === 'error' ? (
           <ErrorState message={txs.error ?? undefined} onRetry={txs.reload} />
         ) : txs.data && txs.data.transactions.length > 0 ? (
-          <TransactionList transactions={txs.data.transactions} />
+          <TransactionList transactions={txs.data.transactions} onChanged={txs.reload} />
         ) : (
           <EmptyState />
         )}

@@ -30,7 +30,14 @@ function groupByDay(txs: TransactionItem[]): DayGroup[] {
   return groups;
 }
 
-export function TransactionList({ transactions }: { transactions: TransactionItem[] }) {
+export function TransactionList({
+  transactions,
+  onChanged,
+}: {
+  transactions: TransactionItem[];
+  /** Перезапрос списка после смены категории в детальной карточке. */
+  onChanged?: () => void;
+}) {
   const groups = groupByDay(transactions);
 
   return (
@@ -42,7 +49,7 @@ export function TransactionList({ transactions }: { transactions: TransactionIte
           </h3>
           <div className="divide-y divide-border rounded-md bg-surface-2 px-4">
             {group.items.map((tx) => (
-              <TransactionRow key={tx.id} tx={tx} />
+              <TransactionRow key={tx.id} tx={tx} onChanged={onChanged} />
             ))}
           </div>
         </div>
