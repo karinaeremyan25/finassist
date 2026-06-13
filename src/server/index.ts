@@ -15,6 +15,12 @@ import { fundsHandler } from './routes/funds.js';
 import { tochkaCallbackHandler } from './routes/tochka.js';
 import { adminUsersHandler } from './routes/admin.js';
 import { planHandler } from './routes/plan.js';
+import {
+  pnlHandler,
+  pnlYearHandler,
+  personalSpendingHandler,
+  updateTxCategoryHandler,
+} from './routes/pnl.js';
 
 export function buildRouter(): Router {
   const router = new Router();
@@ -55,6 +61,15 @@ export function buildRouter(): Router {
   // Plan/fact по месяцам
   router.get('/api/analytics/plan', planHandler);
   router.post('/api/analytics/plan', planHandler);
+
+  // P&L (feature-spec-pnl.md)
+  // Порядок важен: /api/analytics/pnl/year регистрируем ДО /api/analytics/pnl,
+  // иначе роутер (exact match) их не перепутает — они разные строки.
+  router.get('/api/analytics/pnl/year', pnlYearHandler);
+  router.get('/api/analytics/pnl', pnlHandler);
+  router.get('/api/analytics/personal-spending', personalSpendingHandler);
+  // PATCH без :param — id передаётся в теле запроса (Router делает exact match)
+  router.add('PATCH', '/api/analytics/transactions/category', updateTxCategoryHandler);
 
   return router;
 }
