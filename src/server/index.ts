@@ -13,6 +13,7 @@ import { aiChatHandler } from './routes/aiChat.js';
 import { robokassaWebhookHandler, prodamusWebhookHandler } from './routes/webhooks.js';
 import { fundsHandler } from './routes/funds.js';
 import { tochkaCallbackHandler } from './routes/tochka.js';
+import { tochkaSyncHandler } from './routes/tochkaSync.js';
 import { adminUsersHandler } from './routes/admin.js';
 import { planHandler } from './routes/plan.js';
 import {
@@ -34,6 +35,14 @@ export function buildRouter(): Router {
   // ── Точка OAuth callback (БЕЗ Telegram-авторизации — OAuth redirect) ─────
   // Redirect URL в кабинете разработчика Точки = TOCHKA_REDIRECT_URI
   router.get('/api/tochka/callback', tochkaCallbackHandler);
+
+  // ── Точка: ручная/cron синхронизация выписок ──────────────────────────────
+  // Authorization: Bearer <CRON_SECRET> → cron-путь (без Telegram initData).
+  // X-Telegram-Init-Data → кнопка «Обновить» в Mini App (resolveWebAppUser).
+  router.add('POST', '/api/tochka/sync', tochkaSyncHandler);
+  // Vercel Cron дёргает путь методом GET — регистрируем и его (та же авторизация
+  // по CRON_SECRET внутри handler).
+  router.add('GET', '/api/tochka/sync', tochkaSyncHandler);
 
   // Mini App session
   router.post('/api/webapp/session', sessionHandler);

@@ -167,6 +167,11 @@ export const api = {
     });
   },
 
+  /** Ручная синхронизация с Точкой (кнопка «Обновить»). */
+  syncTochka(): Promise<{ ok: boolean; added?: number; balancesUpdated?: number; classified?: number; dateTo?: string; error?: string }> {
+    return request('/api/tochka/sync', { method: 'POST', body: '{}' });
+  },
+
   // ── Админка: управление пользователями (только owner) ────────────────────
 
   adminListUsers(): Promise<AdminListResponse> {

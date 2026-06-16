@@ -1,7 +1,8 @@
 /** Экран Dashboard (§5/§6/§7): баланс, KPI, donut, инсайты, операции. */
 
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowDownLeft, ArrowUpRight, TrendingUp, Gem } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, TrendingUp, Gem, RefreshCw } from 'lucide-react';
 import { Header } from '../components/Header';
 import { SectionHeader } from '../components/AppLayout';
 import { Donut } from '../components/Donut';
@@ -43,9 +44,50 @@ export function Dashboard() {
     summary.data.totalExpense === 0;
   const hasFilter = entity_id !== null || direction_id !== null;
 
+  // Ручная синхронизация с Точкой.
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
+  async function handleSync(): Promise<void> {
+    if (syncing) return;
+    setSyncing(true);
+    setSyncMsg(null);
+    try {
+      const r = await api.syncTochka();
+      if (r.ok) {
+        setSyncMsg(`Обновлено: +${r.added ?? 0} операций, балансы синхронизированы`);
+        summary.reload();
+        insights.reload();
+        txs.reload();
+        plan.reload();
+      } else {
+        setSyncMsg(r.error ?? 'Не удалось обновить');
+      }
+    } catch {
+      setSyncMsg('Ошибка обновления. Попробуйте позже.');
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   return (
     <>
       <Header />
+
+      {/* Кнопка ручной синхронизации с Точкой */}
+      <section className="px-4 pt-1">
+        <button
+          type="button"
+          onClick={handleSync}
+          disabled={syncing}
+          className="flex min-h-[40px] w-full items-center justify-center gap-2 rounded-md bg-surface-2 px-3 text-[14px] font-medium text-ink active:opacity-90 disabled:opacity-60"
+        >
+          <RefreshCw size={16} strokeWidth={2} className={syncing ? 'animate-spin' : ''} />
+          {syncing ? 'Обновляю из Точки…' : 'Обновить из Точки'}
+        </button>
+        {syncMsg !== null ? (
+          <p className="mt-1 text-center text-[12px] text-ink-muted">{syncMsg}</p>
+        ) : null}
+      </section>
 
       {/* Карточка баланса + KPI */}
       <section className="px-4 -mt-2">

@@ -5,9 +5,12 @@
   "framework": null,
   "functions": {
     "api/**/*.ts": {
-      "maxDuration": 60
+      "maxDuration": 300
     }
   },
+  "crons": [
+    { "path": "/api/tochka/sync", "schedule": "0 6 * * *" }
+  ],
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/router" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }

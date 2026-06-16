@@ -61,6 +61,15 @@ const ConfigSchema = z.object({
   // Точка Банк: redirect_uri для authorization_code flow.
   // Должен совпадать с Redirect URL, указанным при регистрации приложения в Точке.
   TOCHKA_REDIRECT_URI: z.string().url().default('https://finassist-virid.vercel.app/api/tochka/callback'),
+  // Точка Банк: JWT Bearer-токен для прямого доступа к выпискам (без OAuth).
+  // Используется синхронизатором POST /api/tochka/sync (tochkaSync.ts).
+  // Если не задан — синхронизация вернёт ошибку «ключ Точки не настроен».
+  TOCHKA_JWT_TOKEN: z.string().optional(),
+  // Секрет для авторизации cron-вызовов (POST /api/tochka/sync).
+  // Передаётся в заголовке: Authorization: Bearer <CRON_SECRET>.
+  // Если не задан — cron-аутентификация отключена (принимаются только
+  // запросы от пользователей Mini App через X-Telegram-Init-Data).
+  CRON_SECRET: z.string().optional(),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
