@@ -82,3 +82,5 @@ export function buildRouter(): Router {
 
   return router;
 }
+
+// redeploy 66bc720 — подхватить TOCHKA_JWT_TOKEN/CRON_SECRET
