@@ -76,7 +76,7 @@ const AccountsResponseSchema = z.object({
  */
 const BalanceItemSchema = z.object({
   Amount: z.object({
-    amount: z.string(),
+    amount: z.union([z.string(), z.number()]),
     currency: z.string().default('RUB'),
   }),
   type: z.string(),
@@ -108,7 +108,7 @@ const TxSchema = z.object({
   transactionId: z.string(),
   creditDebitIndicator: z.enum(['Credit', 'Debit']),
   Amount: z.object({
-    amount: z.string(),
+    amount: z.union([z.string(), z.number()]),
     currency: z.string().default('RUB'),
   }).optional(),
   // documentProcessDate — поле Точки (есть в скрипте); bookingDateTime — запасной
