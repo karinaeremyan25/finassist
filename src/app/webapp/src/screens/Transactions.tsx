@@ -8,7 +8,7 @@ import { FilterBar } from '../components/FilterBar';
 import { useApp, useFilters } from '../state/FilterContext';
 import { useAsync } from '../lib/useAsync';
 import { api } from '../lib/api';
-import { rubles } from '../lib/money';
+import { rubles, rublesSigned } from '../lib/money';
 
 export function Transactions() {
   const { period, entity_id, direction_id } = useFilters();
@@ -39,9 +39,13 @@ export function Transactions() {
           <Skeleton className="h-16 w-full" />
         ) : summary.status === 'success' && summary.data ? (
           <div className="grid grid-cols-3 gap-2 rounded-md bg-surface-2 p-3 text-center">
-            <SummaryCell label="Доходы" value={rubles(summary.data.totalIncome)} color="var(--income)" />
-            <SummaryCell label="Расходы" value={rubles(summary.data.totalExpense)} color="var(--expense)" />
-            <SummaryCell label="Баланс" value={rubles(summary.data.balance)} color="var(--text)" />
+            <SummaryCell label="Доходы" value={`+${rubles(summary.data.totalIncome)}`} color="var(--income)" />
+            <SummaryCell label="Расходы" value={`−${rubles(summary.data.totalExpense)}`} color="var(--expense)" />
+            <SummaryCell
+              label="Доход − Расход"
+              value={rublesSigned(summary.data.balance)}
+              color={summary.data.balance >= 0 ? 'var(--income)' : 'var(--expense)'}
+            />
           </div>
         ) : null}
       </section>

@@ -367,7 +367,8 @@ export const transactionsHandler: ApiHandler = async (req) => {
           id: item.id,
           date: item.occurredAt,
           description: item.description,
-          amount: item.amountRub,
+          // Знак суммы: доход +, расход − (в БД amount_rub хранится без знака).
+          amount: item.flowType === 'expense' ? -item.amountRub : item.amountRub,
           direction: item.directionName,
           category: item.categoryName ?? item.flowType,
           counterparty: item.counterparty,
