@@ -155,10 +155,13 @@ export const summaryHandler: ApiHandler = async (req) => {
       revenue > 0n ? Math.round((Number(profitAmount) / Number(revenue)) * 1000) / 10 : 0;
     distribution.push({ label: 'Прибыль', amount: profitAmount, percent: profitPercent, kind: 'profit' });
 
+    const fundsTotal = fundBalances.reduce((s, b) => s + b.balanceKopecks, 0n);
+
     const summary: AnalyticsSummary = {
       totalIncome: totals.totalIncomeKopecks,
       totalExpense: totals.totalExpenseKopecks,
       balance: totals.totalIncomeKopecks - totals.totalExpenseKopecks,
+      fundsTotal,
       fundStatus: {
         taxFund,
         reserveFund,
@@ -191,7 +194,7 @@ export const summaryHandler: ApiHandler = async (req) => {
     return {
       status: 200,
       body: {
-        totalIncome: 0, totalExpense: 0, balance: 0,
+        totalIncome: 0, totalExpense: 0, balance: 0, fundsTotal: 0,
         fundStatus: { taxFund: 0, reserveFund: 0, gratitudeFund: 0, creditFund: 0, profitFund: 0 },
         distribution: [],
         categoryBreakdown: [],

@@ -218,14 +218,14 @@ function BalanceBlock({ data }: { data: import('../lib/types').AnalyticsSummary 
         style={{ background: 'var(--grad-balance)' }}
       >
         <p className="text-[13px] font-medium uppercase tracking-[0.04em] text-ink-muted">
-          Общий баланс
+          Деньги в фондах
         </p>
         <p className="num mt-1 text-[34px] font-bold leading-[40px] text-ink">
-          {rubles(data.balance)}
+          {rubles(data.fundsTotal)}
         </p>
-        <p className="mt-2 flex items-center gap-1 text-[13px]" style={{ color: 'var(--income)' }}>
+        <p className="mt-2 flex items-center gap-1 text-[13px] text-ink-muted">
           <TrendingUp size={16} strokeWidth={2} />
-          <span className="num">Доход — Расход за период</span>
+          <span className="num">Накоплено в фондах (из Точки)</span>
         </p>
       </div>
 

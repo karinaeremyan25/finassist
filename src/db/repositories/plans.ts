@@ -112,6 +112,7 @@ export async function getMonthActuals(
     FROM transactions
     WHERE deleted_at IS NULL
       AND flow_type = 'income'
+      AND pnl_category IS DISTINCT FROM 'loan'
       AND occurred_at >= ${dateFrom}::timestamptz
       AND occurred_at < ${dateNextMonth}::timestamptz
   `;

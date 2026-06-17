@@ -286,6 +286,8 @@ export interface AnalyticsSummary {
   totalIncome: bigint;
   totalExpense: bigint;
   balance: bigint;
+  /** Сумма балансов всех фондов (реальные деньги в фондах-копилках Точки). */
+  fundsTotal: bigint;
   fundStatus: FundStatusPayload;
   distribution: DistributionSlice[];
   categoryBreakdown: Array<{ category: string; amount: bigint }>;

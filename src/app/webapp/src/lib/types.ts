@@ -36,6 +36,8 @@ export interface AnalyticsSummary {
   totalIncome: number;
   totalExpense: number;
   balance: number;
+  /** Сумма балансов всех фондов (реальные деньги в копилках Точки), копейки. */
+  fundsTotal: number;
   fundStatus: FundStatus;
   distribution: DistributionSlice[];
   categoryBreakdown: Array<{ category: string; amount: number }>;
