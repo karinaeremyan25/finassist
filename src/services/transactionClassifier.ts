@@ -186,14 +186,16 @@ async function classifyBatch(batch: TxToClassify[]): Promise<TxClassification[]>
         // Claude пропустил транзакцию — безопасный фолбэк по этой одной.
         return { id: tx.id, pnlCategory: 'other_business', confidence: 0, isPersonal: false };
       }
-      const category: Category = item.category;
-      const isPersonal = PERSONAL_SET.has(category);
+      const rawCategory: Category = item.category;
+      // Личных трат у владельца нет (территориально за границей, карты РФ не
+      // работают): покупки по корпоративной карте — это бизнес-расходы команды.
+      // Поэтому любую personal_* схлопываем в other_business, is_personal=false.
+      const category = PERSONAL_SET.has(rawCategory) ? 'other_business' : rawCategory;
       return {
         id: tx.id,
         pnlCategory: category,
         confidence: item.confidence,
-        // Доверяем нашему правилу personal_* поверх флага модели (консистентность).
-        isPersonal,
+        isPersonal: false,
       };
     });
 

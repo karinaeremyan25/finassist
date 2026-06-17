@@ -1,16 +1,12 @@
-/** AIChatWidget = вкладка «Чат». Шлёт POST /api/ai-chat, рендерит answer. */
+/** AIChatWidget = вкладка «Чат». Шлёт POST /api/ai-chat, рендерит answer (markdown). */
 
-import { useRef, useState } from 'react';
-import { SendHorizontal, Sparkles } from 'lucide-react';
+import { useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import { SendHorizontal, Sparkles, Trash2 } from 'lucide-react';
 import { Header } from '../components/Header';
-import { useFilters } from '../state/FilterContext';
+import { useApp, useFilters, type ChatMessage } from '../state/FilterContext';
 import { api, ApiClientError } from '../lib/api';
-
-interface Msg {
-  id: number;
-  role: 'user' | 'assistant' | 'error';
-  text: string;
-}
+import { openLink } from '../lib/telegram';
 
 const ERROR_HINTS: Record<string, string> = {
   off_topic: 'Я отвечаю только на вопросы про финансы и аналитику этого бизнеса.',
@@ -22,10 +18,9 @@ const ERROR_HINTS: Record<string, string> = {
 
 export function Chat() {
   const { period, entity_id } = useFilters();
-  const [messages, setMessages] = useState<Msg[]>([]);
+  const { chatMessages, addChatMessage, clearChat } = useApp();
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
-  const nextId = useRef(1);
 
   async function send() {
     const question = input.trim();
@@ -34,7 +29,7 @@ export function Chat() {
       return;
     }
     setInput('');
-    push({ role: 'user', text: question });
+    addChatMessage({ role: 'user', text: question });
     setBusy(true);
     try {
       const res = await api.aiChat({
@@ -44,32 +39,42 @@ export function Chat() {
         to: period.to,
         context: 'dashboard',
       });
-      push({ role: 'assistant', text: res.answer });
+      addChatMessage({ role: 'assistant', text: res.answer });
     } catch (err) {
       const code = err instanceof ApiClientError ? err.code : 'network_error';
       const msg =
         err instanceof ApiClientError && !ERROR_HINTS[code] ? err.message : ERROR_HINTS[code];
-      push({ role: 'error', text: msg ?? 'Ошибка запроса.' });
+      addChatMessage({ role: 'error', text: msg ?? 'Ошибка запроса.' });
     } finally {
       setBusy(false);
     }
   }
 
-  function push(m: Omit<Msg, 'id'>) {
-    setMessages((prev) => [...prev, { ...m, id: nextId.current++ }]);
-  }
   function pushError(code: string) {
-    push({ role: 'error', text: ERROR_HINTS[code] ?? 'Ошибка.' });
+    addChatMessage({ role: 'error', text: ERROR_HINTS[code] ?? 'Ошибка.' });
   }
 
   return (
     <>
       <Header />
       <div className="flex flex-col px-4 -mt-2" style={{ minHeight: 'calc(100vh - 140px)' }}>
-        <h1 className="mb-3 text-[22px] font-semibold text-ink">AI-наставник</h1>
+        <div className="mb-3 flex items-center justify-between">
+          <h1 className="text-[22px] font-semibold text-ink">AI-наставник</h1>
+          {chatMessages.length > 0 ? (
+            <button
+              type="button"
+              onClick={clearChat}
+              aria-label="Очистить чат"
+              className="flex h-9 items-center gap-1.5 rounded-md px-2.5 text-[13px] text-ink-faint active:opacity-70"
+            >
+              <Trash2 size={15} strokeWidth={2} />
+              Очистить
+            </button>
+          ) : null}
+        </div>
 
         <div className="flex-1 space-y-3 pb-4">
-          {messages.length === 0 ? (
+          {chatMessages.length === 0 ? (
             <div className="rounded-md bg-surface-2 p-4">
               <div className="mb-1 flex items-center gap-2 text-accent">
                 <Sparkles size={16} strokeWidth={2} />
@@ -80,7 +85,7 @@ export function Chat() {
               </p>
             </div>
           ) : (
-            messages.map((m) => <Bubble key={m.id} msg={m} />)
+            chatMessages.map((m) => <Bubble key={m.id} msg={m} />)
           )}
           {busy ? (
             <div className="text-[13px] text-ink-faint">AI-наставник печатает…</div>
@@ -118,28 +123,63 @@ export function Chat() {
   );
 }
 
-function Bubble({ msg }: { msg: Msg }) {
+function Bubble({ msg }: { msg: ChatMessage }) {
   if (msg.role === 'user') {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[85%] rounded-md bg-accent px-4 py-2 text-[15px] leading-[22px] text-accent-ink">
+        <div className="max-w-[85%] whitespace-pre-line rounded-md bg-accent px-4 py-2 text-[15px] leading-[22px] text-accent-ink">
           {msg.text}
         </div>
       </div>
     );
   }
+
   const isError = msg.role === 'error';
+
+  if (isError) {
+    return (
+      <div className="flex justify-start">
+        <div
+          className="max-w-[90%] whitespace-pre-line rounded-md px-4 py-3 text-[15px] leading-[22px]"
+          style={{
+            background: 'var(--surface-2)',
+            color: 'var(--expense)',
+            border: '1px solid var(--expense)',
+          }}
+        >
+          {msg.text}
+        </div>
+      </div>
+    );
+  }
+
+  // Ассистент: рендерим markdown.
+  // Нормализуем буллеты «• » → «- », чтобы они стали настоящими списками.
+  const md = msg.text.replace(/^[ \t]*[•‣◦]\s+/gm, '- ');
   return (
     <div className="flex justify-start">
       <div
-        className="max-w-[90%] whitespace-pre-line rounded-md px-4 py-3 text-[15px] leading-[22px]"
-        style={{
-          background: 'var(--surface-2)',
-          color: isError ? 'var(--expense)' : 'var(--text)',
-          border: isError ? '1px solid var(--expense)' : 'none',
-        }}
+        className="md-answer max-w-[90%] rounded-md px-4 py-3"
+        style={{ background: 'var(--surface-2)', color: 'var(--text)' }}
       >
-        {msg.text}
+        <ReactMarkdown
+          components={{
+            a: ({ href, children }) => (
+              <a
+                href={href}
+                onClick={(e) => {
+                  e.preventDefault();
+                  if (href) openLink(href);
+                }}
+                style={{ color: 'var(--accent)' }}
+              >
+                {children}
+              </a>
+            ),
+          }}
+        >
+          {md}
+        </ReactMarkdown>
       </div>
     </div>
   );

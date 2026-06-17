@@ -10,6 +10,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -22,6 +23,13 @@ interface FilterState {
   period: Period;
 }
 
+/** Сообщение чата AI-наставника. Живёт в контексте, переживает навигацию. */
+export interface ChatMessage {
+  id: number;
+  role: 'user' | 'assistant' | 'error';
+  text: string;
+}
+
 interface AppContextValue extends FilterState {
   sessionLoading: boolean;
   sessionError: string | null;
@@ -32,6 +40,10 @@ interface AppContextValue extends FilterState {
   setDirection: (id: string | null) => void;
   setPeriod: (period: Period) => void;
   retrySession: () => void;
+  /** История чата AI-наставника — сохраняется между вкладками. */
+  chatMessages: ChatMessage[];
+  addChatMessage: (msg: Omit<ChatMessage, 'id'>) => void;
+  clearChat: () => void;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -51,6 +63,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [entityId, setEntityId] = useState<string | null>(null);
   const [directionId, setDirectionId] = useState<string | null>(null);
   const [period, setPeriodState] = useState<Period>(FALLBACK_PERIOD);
+
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const chatNextId = useRef(1);
+
+  const addChatMessage = useCallback((msg: Omit<ChatMessage, 'id'>) => {
+    setChatMessages((prev) => [...prev, { ...msg, id: chatNextId.current++ }]);
+  }, []);
+  const clearChat = useCallback(() => setChatMessages([]), []);
 
   const loadSession = useCallback(async () => {
     setSessionLoading(true);
@@ -88,8 +108,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setDirection: setDirectionId,
       setPeriod: setPeriodState,
       retrySession: () => void loadSession(),
+      chatMessages,
+      addChatMessage,
+      clearChat,
     }),
-    [entityId, directionId, period, sessionLoading, sessionError, session, loadSession]
+    [
+      entityId,
+      directionId,
+      period,
+      sessionLoading,
+      sessionError,
+      session,
+      loadSession,
+      chatMessages,
+      addChatMessage,
+      clearChat,
+    ]
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

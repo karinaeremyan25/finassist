@@ -14,6 +14,8 @@ interface TelegramWebApp {
     impactOccurred: (style: 'light' | 'medium' | 'heavy') => void;
     selectionChanged: () => void;
   };
+  openLink?: (url: string) => void;
+  openTelegramLink?: (url: string) => void;
 }
 
 interface TelegramNamespace {
@@ -52,4 +54,23 @@ export function getInitData(): string {
 
 export function hapticSelection(): void {
   getWebApp()?.HapticFeedback?.selectionChanged();
+}
+
+/** Открыть ссылку из чата: через Telegram, иначе в новой вкладке браузера. */
+export function openLink(url: string): void {
+  const wa = getWebApp();
+  const isTelegramLink = /^https?:\/\/(t\.me|telegram\.me)\//i.test(url);
+  try {
+    if (wa && isTelegramLink && wa.openTelegramLink) {
+      wa.openTelegramLink(url);
+      return;
+    }
+    if (wa?.openLink) {
+      wa.openLink(url);
+      return;
+    }
+  } catch {
+    /* вне Telegram — падаем на window.open */
+  }
+  window.open(url, '_blank', 'noopener,noreferrer');
 }
