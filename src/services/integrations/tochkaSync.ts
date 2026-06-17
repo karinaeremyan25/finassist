@@ -377,7 +377,7 @@ async function insertTransaction(
 
   // Сумма
   const rubStr = tx.Amount?.amount ?? '0';
-  const rub = parseFloat(rubStr);
+  const rub = Number(rubStr);
   if (!(rub > 0)) {
     return { id: '', flowType, wasInserted: false };
   }
@@ -640,7 +640,7 @@ export async function syncTochka(
 
       // Проверяем, что сумма положительная (как в скрипте)
       const rubStr = tx.Amount?.amount ?? '0';
-      const rub = parseFloat(rubStr);
+      const rub = Number(rubStr);
       if (!(rub > 0)) continue;
 
       let result: InsertResult;
