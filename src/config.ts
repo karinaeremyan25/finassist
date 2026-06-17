@@ -64,7 +64,8 @@ const ConfigSchema = z.object({
   // Точка Банк: JWT Bearer-токен для прямого доступа к выпискам (без OAuth).
   // Используется синхронизатором POST /api/tochka/sync (tochkaSync.ts).
   // Если не задан — синхронизация вернёт ошибку «ключ Точки не настроен».
-  TOCHKA_JWT_TOKEN: z.string().optional(),
+  // .trim() — подстраховка от случайных пробелов/переносов при вставке в Vercel.
+  TOCHKA_JWT_TOKEN: z.string().trim().optional(),
   // Секрет для авторизации cron-вызовов (POST /api/tochka/sync).
   // Передаётся в заголовке: Authorization: Bearer <CRON_SECRET>.
   // Если не задан — cron-аутентификация отключена (принимаются только

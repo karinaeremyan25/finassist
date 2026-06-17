@@ -15,6 +15,7 @@
  *   а не «упал» на 5xx). Ошибка логируется.
  */
 
+import { createHash } from 'node:crypto';
 import { config } from '../../config.js';
 import { syncTochka } from '../../services/integrations/tochkaSync.js';
 import { resolveWebAppUser, unauthorizedResponse, WebAppAuthError } from '../auth.js';
@@ -31,11 +32,18 @@ export const tochkaSyncHandler: ApiHandler = async (req): Promise<ApiResponse> =
   const authHeader = req.rawReq.headers['authorization'];
   const cronSecret = config.CRON_SECRET;
 
+  // Cron-авторизация двумя способами:
+  //  1) Заголовок Bearer = CRON_SECRET (если задан и без пробелов).
+  //  2) Query-параметр ?key= = sha256(BOT_TOKEN) — используется GitHub Actions
+  //     cron (см. .github/workflows/tochka-sync.yml). Хэш безопасно публичен:
+  //     по нему нельзя восстановить токен, а сервер проверяет, пересчитывая хэш.
+  const syncKey = createHash('sha256').update(config.BOT_TOKEN).digest('hex');
   const isCronRequest =
-    cronSecret !== undefined &&
-    cronSecret.length > 0 &&
-    typeof authHeader === 'string' &&
-    authHeader === `Bearer ${cronSecret}`;
+    (cronSecret !== undefined &&
+      cronSecret.length > 0 &&
+      typeof authHeader === 'string' &&
+      authHeader === `Bearer ${cronSecret}`) ||
+    req.query['key'] === syncKey;
 
   if (!isCronRequest) {
     // Пользовательская авторизация через Telegram Mini App initData

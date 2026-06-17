@@ -1,0 +1,27 @@
+name: Tochka sync
+
+# Автосинхронизация выписок Точки дважды в день.
+# Дёргает защищённый эндпоинт /api/tochka/sync по ключу (sha256 от BOT_TOKEN —
+# сервер проверяет, пересчитывая хэш; по хэшу токен не восстановить).
+# Заменяет Vercel Cron (тот требует CRON_SECRET без пробелов в env Vercel).
+
+on:
+  schedule:
+    - cron: '0 6 * * *'   # 09:00 МСК (06:00 UTC)
+    - cron: '0 16 * * *'  # 19:00 МСК (16:00 UTC)
+  workflow_dispatch: {}    # ручной запуск из вкладки Actions
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Tochka sync
+        run: |
+          echo "Запуск синхронизации Точки…"
+          HTTP=$(curl -sS --max-time 290 -o /tmp/resp.json -w "%{http_code}" \
+            "https://finassist-virid.vercel.app/api/tochka/sync?key=b7db46006fa87ca20357f1ea33313a5f2767b48f15c376c10c5d850214f9fb9b")
+          echo "HTTP $HTTP"
+          cat /tmp/resp.json || true
+          echo ""
+          # Падаем, только если HTTP не 200 (чтобы видеть проблемы в Actions).
+          test "$HTTP" = "200"
