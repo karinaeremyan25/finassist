@@ -431,7 +431,7 @@ export async function getSummaryTotals(params: SummaryTotalsParams): Promise<Sum
 
   const rows = await sql<{ total_income: bigint; total_expense: bigint }[]>`
     SELECT
-      COALESCE(SUM(amount_rub) FILTER (WHERE flow_type = 'income' AND pnl_category IS DISTINCT FROM 'loan'), 0)::bigint AS total_income,
+      COALESCE(SUM(amount_rub) FILTER (WHERE flow_type = 'income'), 0)::bigint AS total_income,
       COALESCE(SUM(amount_rub) FILTER (WHERE flow_type = 'expense'), 0)::bigint AS total_expense
     FROM transactions
     WHERE deleted_at IS NULL
