@@ -20,6 +20,8 @@ const CBR_URL = 'https://www.cbr.ru/scripts/XML_daily.asp';
 const HTTP_TIMEOUT_MS = 10_000;
 const MAX_ATTEMPTS = 3;
 const RETRY_DELAYS_MS = [1_000, 3_000, 9_000] as const;
+/** Масштаб хранения курса в fx_rates.rate (BIGINT): 4 знака после запятой. */
+const RATE_SCALE = 10_000;
 
 /** Валюты, которые отслеживаем (соответствует CHECK в таблице fx_rates). */
 const TRACKED_CURRENCIES = ['USD', 'EUR', 'KZT'] as const;
@@ -139,11 +141,14 @@ export async function fetchAndStoreFxRates(date?: string): Promise<FxRate[]> {
 
   const stored: FxRate[] = [];
   for (const [currency, rateToRub] of rates) {
+    // Реальная схема fx_rates: (currency, rate BIGINT, date). Курс храним
+    // масштабированным ×RATE_SCALE (4 знака после запятой) — bigint, без float.
+    const rateScaled = BigInt(Math.round(rateToRub * RATE_SCALE));
     await sql`
-      INSERT INTO fx_rates (rate_date, currency, rate_to_rub, source)
-      VALUES (${rateDate}, ${currency}, ${rateToRub}, 'cbr.ru')
-      ON CONFLICT (rate_date, currency)
-      DO UPDATE SET rate_to_rub = EXCLUDED.rate_to_rub
+      INSERT INTO fx_rates (currency, rate, date)
+      VALUES (${currency}, ${rateScaled}, ${rateDate})
+      ON CONFLICT (currency, date)
+      DO UPDATE SET rate = EXCLUDED.rate
     `;
     stored.push({ rateDate, currency, rateToRub });
   }
@@ -152,29 +157,29 @@ export async function fetchAndStoreFxRates(date?: string): Promise<FxRate[]> {
   return stored;
 }
 
-/** Курс на точную дату из БД. */
+/** Курс на точную дату из БД. rate хранится ×RATE_SCALE (bigint). */
 async function selectExactRate(currency: string, date: string): Promise<number | null> {
-  const rows = await sql<{ rate_to_rub: string }[]>`
-    SELECT rate_to_rub
+  const rows = await sql<{ rate: string }[]>`
+    SELECT rate
     FROM fx_rates
-    WHERE currency = ${currency} AND rate_date = ${date}
+    WHERE currency = ${currency} AND date = ${date}
     LIMIT 1
   `;
   const row = rows[0];
-  return row === undefined ? null : Number(row.rate_to_rub);
+  return row === undefined ? null : Number(row.rate) / RATE_SCALE;
 }
 
 /** Последний известный курс на дату <= date. */
 async function selectLatestRate(currency: string, date: string): Promise<number | null> {
-  const rows = await sql<{ rate_to_rub: string }[]>`
-    SELECT rate_to_rub
+  const rows = await sql<{ rate: string }[]>`
+    SELECT rate
     FROM fx_rates
-    WHERE currency = ${currency} AND rate_date <= ${date}
-    ORDER BY rate_date DESC
+    WHERE currency = ${currency} AND date <= ${date}
+    ORDER BY date DESC
     LIMIT 1
   `;
   const row = rows[0];
-  return row === undefined ? null : Number(row.rate_to_rub);
+  return row === undefined ? null : Number(row.rate) / RATE_SCALE;
 }
 
 /**

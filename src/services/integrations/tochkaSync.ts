@@ -25,6 +25,7 @@ import { sql } from '../../db/client.js';
 import { childLogger } from '../../utils/logger.js';
 import { toKopecks } from '../../utils/money.js';
 import { classifyTransactions, type TxToClassify } from '../transactionClassifier.js';
+import { fetchAndStoreFxRates } from '../cbr.js';
 
 const log = childLogger({ handler: 'tochkaSync' });
 
@@ -597,6 +598,14 @@ export async function syncTochka(
     { handler: 'tochkaSync', start_date: startDate, end_date: today },
     'tochka_sync_start'
   );
+
+  // Обновляем курсы валют ЦБ РФ (для конвертации валютных доходов Lava: USD/EUR).
+  // Не фатально: при сбое ЦБ продолжаем синк (используются последние известные курсы).
+  try {
+    await fetchAndStoreFxRates();
+  } catch (err) {
+    log.warn({ handler: 'tochkaSync', err: String(err) }, 'tochka_fx_refresh_failed');
+  }
 
   // Резолвим source_id по коду 'tochka' ОДИН РАЗ
   const srcRows = await sql<{ id: string }[]>`
