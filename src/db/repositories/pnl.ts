@@ -64,11 +64,12 @@ export type PnlCategory = (typeof VALID_PNL_CATEGORIES)[number];
 
 export interface PnlPeriodData {
   incomeTotal: bigint;
-  /** Разбивка по source code: prodamus / robokassa / tochka_direct */
+  /** Разбивка по source code: prodamus / robokassa / tochka_direct / lava */
   incomeSources: {
     prodamus: bigint;
     robokassa: bigint;
     tochka_direct: bigint;
+    lava: bigint;
   };
   /** Бизнес-расходы (is_personal=false) по категориям */
   expensesBreakdown: {
@@ -200,6 +201,7 @@ export async function getPnlForPeriod(
   const prodamus = incomeSourceRows.find((r) => r.source_code === 'prodamus')?.amount ?? 0n;
   const robokassa = incomeSourceRows.find((r) => r.source_code === 'robokassa')?.amount ?? 0n;
   const tochka_direct = incomeSourceRows.find((r) => r.source_code === 'tochka')?.amount ?? 0n;
+  const lava = incomeSourceRows.find((r) => r.source_code === 'lava')?.amount ?? 0n;
 
   // 3. Бизнес-расходы (is_personal=false) по pnl_category
   const expenseRows = await sql<ExpenseCategoryRow[]>`
@@ -235,7 +237,7 @@ export async function getPnlForPeriod(
 
   return {
     incomeTotal,
-    incomeSources: { prodamus, robokassa, tochka_direct },
+    incomeSources: { prodamus, robokassa, tochka_direct, lava },
     expensesBreakdown,
     tax,
   };

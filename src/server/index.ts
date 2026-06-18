@@ -10,7 +10,7 @@ import { sessionHandler } from './routes/session.js';
 import { summaryHandler, chartsHandler, insightsHandler, transactionsHandler } from './routes/analytics.js';
 import { usersHandler } from './routes/users.js';
 import { aiChatHandler } from './routes/aiChat.js';
-import { robokassaWebhookHandler, prodamusWebhookHandler } from './routes/webhooks.js';
+import { robokassaWebhookHandler, prodamusWebhookHandler, lavaWebhookHandler } from './routes/webhooks.js';
 import { fundsHandler } from './routes/funds.js';
 import { tochkaCallbackHandler } from './routes/tochka.js';
 import { tochkaSyncHandler } from './routes/tochkaSync.js';
@@ -31,6 +31,8 @@ export function buildRouter(): Router {
   router.post('/api/webhooks/robokassa', robokassaWebhookHandler);
   // Prodamus — настроить в ЛК Prodamus → Настройки → Уведомления → URL вебхука
   router.post('/api/webhooks/prodamus', prodamusWebhookHandler);
+  // Lava.top — настроить в ЛК Lava.top → API/вебхуки → URL = /api/webhooks/lava
+  router.post('/api/webhooks/lava', lavaWebhookHandler);
 
   // ── Точка OAuth callback (БЕЗ Telegram-авторизации — OAuth redirect) ─────
   // Redirect URL в кабинете разработчика Точки = TOCHKA_REDIRECT_URI

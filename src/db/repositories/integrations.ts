@@ -19,7 +19,7 @@ import { convertToRub } from '../../services/cbr.js';
 // Zod-схемы валидации входных данных
 // ─────────────────────────────────────────────────────────────
 
-const SourceCodeSchema = z.enum(['robokassa', 'prodamus', 'tochka']);
+const SourceCodeSchema = z.enum(['robokassa', 'prodamus', 'tochka', 'lava']);
 
 const FinishSyncSchema = z.object({
   status: z.enum(['ok', 'error', 'skipped_bad_credentials']),

@@ -2,6 +2,7 @@ import { childLogger } from '../../utils/logger.js';
 import type { ApiHandler, ApiResponse } from '../http.js';
 import { handleRobokassaWebhook } from '../../services/integrations/robokassa.js';
 import { handleProdamusWebhook } from '../../services/integrations/prodamus.js';
+import { handleLavaWebhook } from '../../services/integrations/lava.js';
 
 /**
  * Webhook-приёмники платёжных источников.
@@ -59,6 +60,47 @@ export const robokassaWebhookHandler: ApiHandler = async (req): Promise<ApiRespo
   log.info(
     { source: 'robokassa', ok: result.ok, status: result.status, latency_ms: Date.now() - startMs },
     'robokassa_webhook_done'
+  );
+
+  return {
+    status: result.status,
+    body: null,
+    rawBody: result.responseBody,
+    contentType: 'text/plain; charset=utf-8',
+  };
+};
+
+// ── Lava.top ────────────────────────────────────────────────────────────────
+
+export const lavaWebhookHandler: ApiHandler = async (req): Promise<ApiResponse> => {
+  const startMs = Date.now();
+
+  // Lava.top: подпись считается HMAC над СЫРЫМ телом → нужен req.rawBody.
+  const rawBody = req.rawBody;
+  if (rawBody === undefined || rawBody.length === 0) {
+    log.warn({ source: 'lava', latency_ms: Date.now() - startMs }, 'lava_webhook_empty_body');
+    return { status: 400, body: null, rawBody: 'bad sign', contentType: 'text/plain; charset=utf-8' };
+  }
+
+  // Подпись Lava.top приходит в заголовке `signature`
+  const sigHeader = req.rawReq.headers['signature'];
+  const signature = Array.isArray(sigHeader) ? (sigHeader[0] ?? '') : (sigHeader ?? '');
+
+  let result: Awaited<ReturnType<typeof handleLavaWebhook>>;
+  try {
+    result = await handleLavaWebhook(rawBody, signature);
+  } catch (err) {
+    log.error(
+      { source: 'lava', latency_ms: Date.now() - startMs, err_name: err instanceof Error ? err.name : 'unknown' },
+      'lava_webhook_error'
+    );
+    // 200, чтобы Lava не ретраила бесконечно при внутренней ошибке (дедуп защитит от дублей)
+    return { status: 200, body: null, rawBody: 'ok', contentType: 'text/plain; charset=utf-8' };
+  }
+
+  log.info(
+    { source: 'lava', ok: result.ok, status: result.status, latency_ms: Date.now() - startMs },
+    'lava_webhook_done'
   );
 
   return {

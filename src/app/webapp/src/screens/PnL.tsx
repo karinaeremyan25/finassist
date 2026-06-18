@@ -58,6 +58,7 @@ const INCOME_SOURCE_LABELS: Array<{ key: keyof PnlIncomeSources; label: string }
   { key: 'prodamus', label: 'Продамус' },
   { key: 'robokassa', label: 'Робокасса' },
   { key: 'tochka_direct', label: 'Точка напрямую' },
+  { key: 'lava', label: 'Lava.top' },
 ];
 
 /** Подписи и порядок статей бизнес-расходов. */

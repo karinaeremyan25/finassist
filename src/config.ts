@@ -55,6 +55,10 @@ const ConfigSchema = z.object({
   // Prodamus: секретный ключ для HMAC-SHA256 подписи webhook (отдельный от API-ключа).
   // Настройки Prodamus → Уведомления → Секретный ключ.
   PRODAMUS_SECRET_KEY: z.string().optional(),
+  // Lava.top: секрет для верификации подписи вебхука (HMAC-SHA256 над сырым телом,
+  // заголовок `signature`). Личный кабинет Lava.top → Настройки API/вебхуков.
+  // Если не задан — вебхук Lava отклоняется (400 bad sign).
+  LAVA_WEBHOOK_SECRET: z.string().trim().optional(),
   // Точка Банк: OAuth 2.0 client_id и client_secret.
   TOCHKA_CLIENT_ID: z.string().optional(),
   TOCHKA_CLIENT_SECRET: z.string().optional(),

@@ -8,7 +8,7 @@ import type { Currency } from '../../types.js';
  */
 
 /** Код источника — строго типизированное перечисление. */
-export type SourceCode = 'robokassa' | 'prodamus' | 'tochka';
+export type SourceCode = 'robokassa' | 'prodamus' | 'tochka' | 'lava';
 
 /**
  * Сырая транзакция из источника до записи в БД.

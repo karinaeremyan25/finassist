@@ -178,6 +178,7 @@ export interface PnlIncomeSources {
   prodamus?: number;
   robokassa?: number;
   tochka_direct?: number;
+  lava?: number;
 }
 
 /** Разбивка бизнес-расходов (копейки). Все поля опциональны. */
