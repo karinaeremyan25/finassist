@@ -103,11 +103,22 @@ function routeByTitle(title: string): Routing | null {
   return null;
 }
 
-/** События успешной оплаты, по которым создаём доход. */
-const SUCCESS_EVENTS = new Set<string>([
-  'payment.success',
-  'subscription.recurring.payment.success',
-]);
+/**
+ * Успешная ли это оплата (создаём доход). Lava называет события по-разному
+ * («Payment Result» / «Recurrent Payment»), а в теле приходят eventType и
+ * status. Чтобы не потерять реальный платёж из-за расхождения строк, считаем
+ * оплату успешной по eventType ИЛИ status, исключая явные fail/cancel/pending.
+ *
+ * Известные значения (SDK): eventType 'payment.success' /
+ * 'subscription.recurring.payment.success'; status InvoiceStatus
+ * ('completed' / 'subscription-active' и т.п.).
+ */
+function isSuccessfulPayment(eventType: string, status: string | undefined): boolean {
+  const blob = `${eventType} ${status ?? ''}`.toLowerCase();
+  const isNegative = /fail|cancel|decline|refund|pending|expire|error|new|progress/.test(blob);
+  const isPositive = /success|paid|complete|active/.test(blob);
+  return isPositive && !isNegative;
+}
 
 // ── Zod-схема payload ─────────────────────────────────────────────────────
 
@@ -249,9 +260,12 @@ export async function handleLavaWebhook(
   }
   const payload = parsed.data;
 
-  // Только успешные события оплаты. Остальные (failed/cancelled) — 200, без записи.
-  if (!SUCCESS_EVENTS.has(payload.eventType)) {
-    log.info({ source: 'lava', event_type: payload.eventType }, 'lava_webhook_non_success_skipped');
+  // Только успешные события оплаты. Остальные (failed/cancelled/pending) — 200, без записи.
+  if (!isSuccessfulPayment(payload.eventType, payload.status)) {
+    log.info(
+      { source: 'lava', event_type: payload.eventType, status: payload.status ?? null },
+      'lava_webhook_non_success_skipped'
+    );
     return { ok: true, status: 200, responseBody: 'ok' };
   }
 

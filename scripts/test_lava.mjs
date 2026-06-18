@@ -74,6 +74,18 @@ try {
   // 7. РОУТИНГ: сопровождение → ИП
   const guid = await post({ contractId:'guid', product:{id:'p-g',title:'Personal Guidance with Karina Eremyan'} });
   ok(guid.row?.entity_id === IP, '7. Сопровождение Карина → ИП');
+
+  // 8. УСПЕХ по статусу (eventType нестандартный) → запись создаётся
+  const byStatus = await post({ contractId:'bystatus', eventType:'PaymentResult', status:'completed', product:{id:'p1',title:'Что-то'} });
+  ok(byStatus.row, '8. eventType=PaymentResult + status=completed → запись создана');
+
+  // 9. НЕУДАЧА → записи нет
+  const failCid = 'TEST-lava-failed';
+  ids.push('lava_'+failCid);
+  const fbody = JSON.stringify({ eventType:'payment.failed', contractId:failCid, amount:100, currency:'RUB', status:'failed', product:{id:'p1',title:'x'} });
+  await handleLavaWebhook(fbody, { candidates:[SECRET] });
+  const failRow = (await sql`SELECT id FROM transactions WHERE external_id=${'lava_'+failCid} AND deleted_at IS NULL`);
+  ok(failRow.length === 0, '9. payment.failed → транзакция НЕ создана');
 } catch (e) {
   fail++; console.log('  ❌ Исключение:', e.message);
 } finally {
