@@ -108,6 +108,8 @@ export interface FundBalance {
   displayName: string;
   balanceKopecks: bigint;
   defaultPercentage: number;
+  /** Номер счёта Точки ('<номер>/<БИК>'); по префиксу различаем ИП (40802) и ООО (40702). */
+  tochkaAccountId: string | null;
   taxStatus?: {
     nextDeadline: string;
     expectedAmountKopecks: bigint;
@@ -286,8 +288,10 @@ export interface AnalyticsSummary {
   totalIncome: bigint;
   totalExpense: bigint;
   balance: bigint;
-  /** Сумма балансов всех фондов (реальные деньги в фондах-копилках Точки). */
+  /** Сумма балансов ИП-счетов Точки (префикс 40802) — реальные деньги на ИП. */
   fundsTotal: bigint;
+  /** Сумма балансов ООО-счетов Точки (префикс 40702) — реальные деньги на ООО. */
+  oooTotal: bigint;
   fundStatus: FundStatusPayload;
   distribution: DistributionSlice[];
   categoryBreakdown: Array<{ category: string; amount: bigint }>;

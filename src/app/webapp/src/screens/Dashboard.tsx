@@ -227,6 +227,14 @@ function BalanceBlock({ data }: { data: import('../lib/types').AnalyticsSummary 
           <TrendingUp size={16} strokeWidth={2} />
           <span className="num">Все счета ИП в Точке, на сейчас</span>
         </p>
+        {data.oooTotal > 0 ? (
+          <div className="mt-3 flex items-center justify-between border-t border-white/10 pt-3">
+            <span className="text-[13px] font-medium uppercase tracking-[0.04em] text-ink-muted">
+              Деньги на ООО
+            </span>
+            <span className="num text-[17px] font-semibold text-ink">{rubles(data.oooTotal)}</span>
+          </div>
+        ) : null}
       </div>
 
       <div className="mt-3 grid grid-cols-2 gap-3">

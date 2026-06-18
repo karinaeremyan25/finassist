@@ -36,8 +36,10 @@ export interface AnalyticsSummary {
   totalIncome: number;
   totalExpense: number;
   balance: number;
-  /** Сумма балансов всех фондов (реальные деньги в копилках Точки), копейки. */
+  /** Сумма балансов ИП-счетов Точки (префикс 40802), копейки. */
   fundsTotal: number;
+  /** Сумма балансов ООО-счетов Точки (префикс 40702), копейки. */
+  oooTotal: number;
   fundStatus: FundStatus;
   distribution: DistributionSlice[];
   categoryBreakdown: Array<{ category: string; amount: number }>;

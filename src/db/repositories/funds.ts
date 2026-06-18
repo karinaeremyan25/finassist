@@ -37,6 +37,7 @@ interface FundBalanceRow {
   code: string;
   display_name: string;
   balance: bigint | null;
+  tochka_account_id: string | null;
 }
 
 /**
@@ -50,7 +51,8 @@ export async function getFundBalances(_asOfDate?: string): Promise<FundBalance[]
       id,
       code,
       name AS display_name,
-      COALESCE(balance, 0)::bigint AS balance
+      COALESCE(balance, 0)::bigint AS balance,
+      tochka_account_id
     FROM funds
     WHERE deleted_at IS NULL
     ORDER BY code ASC
@@ -62,6 +64,7 @@ export async function getFundBalances(_asOfDate?: string): Promise<FundBalance[]
     displayName: row.display_name,
     balanceKopecks: row.balance ?? 0n,
     defaultPercentage: 0,
+    tochkaAccountId: row.tochka_account_id,
   }));
 }
 

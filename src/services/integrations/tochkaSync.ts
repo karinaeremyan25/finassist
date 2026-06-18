@@ -33,10 +33,22 @@ const log = childLogger({ handler: 'tochkaSync' });
 const API_BASE = 'https://enter.tochka.com/uapi/open-banking/v1.0';
 const MY_INN = '231149826704';
 
-/** UUID ИП Карина Еремян (из задания). */
+/** UUID ИП Карина Еремян (счета Точки с префиксом 40802). */
 const ENTITY_IP_ID = '8355ee9e-11ed-4e73-8bcd-2dc0ff3c8068';
-/** UUID направления ДПО (из задания). */
+/** UUID ООО Ассургина (счета Точки с префиксом 40702). */
+const ENTITY_OOO_ID = 'ce729bf9-649c-41c5-bbfd-ed0fb785c45d';
+/** UUID направления ДПО (доходы ИП). */
 const DIRECTION_DPO_ID = 'b17eb69e-4bd3-441f-8a0c-57734d56840c';
+/** UUID направления Метанойя (доходы ООО). */
+const DIRECTION_METANOIA_ID = 'ac773f21-0f0d-4772-8baf-15cac941c122';
+
+/** ООО — счёт с префиксом 40702; иначе ИП. Возвращает entity+direction для дохода. */
+function entityForAccount(accountId: string): { entityId: string; incomeDirectionId: string } {
+  const num = accountId.split('/')[0] ?? '';
+  return num.startsWith('40702')
+    ? { entityId: ENTITY_OOO_ID, incomeDirectionId: DIRECTION_METANOIA_ID }
+    : { entityId: ENTITY_IP_ID, incomeDirectionId: DIRECTION_DPO_ID };
+}
 
 const STATEMENT_POLL_MAX = 30;
 const STATEMENT_POLL_INTERVAL_MS = 2000;
@@ -370,10 +382,13 @@ async function insertTransaction(
   tx: TxItem,
   today: string,
   sourceId: string,
-  createdBy: bigint
+  createdBy: bigint,
+  accountId: string
 ): Promise<InsertResult> {
   const isCredit = tx.creditDebitIndicator === 'Credit';
   const flowType: 'income' | 'expense' = isCredit ? 'income' : 'expense';
+  // Юрлицо и направление определяем по счёту: 40702 → ООО/Метанойя, иначе ИП/ДПО.
+  const { entityId, incomeDirectionId } = entityForAccount(accountId);
 
   // Сумма
   const rubStr = tx.Amount?.amount ?? '0';
@@ -429,8 +444,8 @@ async function insertTransaction(
   `;
   const categoryId = catRows[0]?.id ?? null;
 
-  // direction_id: для доходов — DPO, для расходов — null (как в скрипте)
-  const directionId: string | null = isCredit ? DIRECTION_DPO_ID : null;
+  // direction_id: для доходов — направление юрлица, для расходов — null
+  const directionId: string | null = isCredit ? incomeDirectionId : null;
 
   const rows = await sql<{ id: string }[]>`
     INSERT INTO transactions (
@@ -445,7 +460,7 @@ async function insertTransaction(
       'RUB',
       ${kop},
       NULL,
-      ${ENTITY_IP_ID},
+      ${entityId},
       ${directionId},
       ${categoryId},
       ${sourceId},
@@ -645,7 +660,7 @@ export async function syncTochka(
 
       let result: InsertResult;
       try {
-        result = await insertTransaction(tx, today, sourceId, createdBy);
+        result = await insertTransaction(tx, today, sourceId, createdBy, accountId);
       } catch (err) {
         log.warn(
           { handler: 'tochkaSync', tx_id: tx.transactionId, err: String(err) },
