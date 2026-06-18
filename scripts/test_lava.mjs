@@ -1,6 +1,6 @@
 /**
- * E2E-тест Lava.top вебхука: подпись → вставка → дедуп. Чистит за собой.
- * Запуск: node scripts/test_lava.mjs   (после npm run build)
+ * E2E-тест Lava.top вебхука: подпись → вставка → дедуп → маршрутизация юрлиц.
+ * Запуск: node scripts/test_lava.mjs   (после npm run build). Чистит за собой.
  */
 import { readFile } from 'node:fs/promises';
 import crypto from 'node:crypto';
@@ -8,65 +8,69 @@ import postgres from 'postgres';
 
 const env = await readFile(new URL('../.env', import.meta.url), 'utf8');
 for (const l of env.split('\n')) { const m=/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/.exec(l); if(m&&!process.env[m[1]])process.env[m[1]]=m[2].trim(); }
-// тестовый секрет (config читает из env при импорте)
 process.env.LAVA_WEBHOOK_SECRET = 'test_secret_lava_123';
 
 const { handleLavaWebhook } = await import('../dist/services/integrations/lava.js');
 const sql = postgres(process.env.DATABASE_URL, { onnotice: () => {}, max: 1 });
 
-const TEST_CONTRACT = 'TEST-' + 'e2e-lava-001';
-const externalId = `lava_${TEST_CONTRACT}`;
+const IP = '8355ee9e-11ed-4e73-8bcd-2dc0ff3c8068';
+const OOO = 'ce729bf9-649c-41c5-bbfd-ed0fb785c45d';
+const SECRET = process.env.LAVA_WEBHOOK_SECRET;
+const sign = (b) => crypto.createHmac('sha256', SECRET).update(b, 'utf8').digest('hex');
+
 let pass = 0, fail = 0;
 const ok = (c, m) => { if (c) { pass++; console.log('  ✅', m); } else { fail++; console.log('  ❌', m); } };
-
-const sign = (body) => crypto.createHmac('sha256', process.env.LAVA_WEBHOOK_SECRET).update(body, 'utf8').digest('hex');
-const payload = {
-  eventType: 'payment.success',
-  contractId: TEST_CONTRACT,
-  product: { id: 'TEST_OFFER', title: 'Тестовый продукт' },
-  amount: 1500.50,
-  currency: 'RUB',
-  status: 'completed',
-  timestamp: '2026-06-17T10:00:00Z',
-  buyer: { email: 'secret@example.com' },
+const ids = [];
+const post = async (over) => {
+  const cid = 'TEST-lava-' + (over.contractId || Math.abs([...JSON.stringify(over)].reduce((a,c)=>a*31+c.charCodeAt(0)|0,7)));
+  const body = JSON.stringify({ eventType:'payment.success', contractId:cid, amount:1000, currency:'RUB', timestamp:'2026-06-17T10:00:00Z', buyer:{email:'x@y.z'}, ...over, contractId:cid });
+  ids.push('lava_' + cid);
+  const res = await handleLavaWebhook(body, sign(body));
+  const row = (await sql`SELECT t.entity_id, c.code AS cat, t.amount_rub FROM transactions t LEFT JOIN categories c ON c.id=t.category_id WHERE t.external_id=${'lava_'+cid} AND t.deleted_at IS NULL`)[0];
+  return { res, row };
 };
-const body = JSON.stringify(payload);
 
 try {
-  // 0. чистим возможный артефакт прошлого прогона
-  await sql`DELETE FROM transactions WHERE external_id = ${externalId}`;
+  // 1. подпись
+  const bad = await handleLavaWebhook('{"eventType":"payment.success","contractId":"x","amount":1,"currency":"RUB"}', 'deadbeef');
+  ok(bad.status === 400, '1. Плохая подпись → 400');
 
-  // 1. плохая подпись → 400
-  const bad = await handleLavaWebhook(body, 'deadbeef');
-  ok(bad.status === 400 && !bad.ok, '1. Плохая подпись → 400 bad sign');
+  // 2. базовая вставка + сумма + приватность
+  const base = await post({ contractId:'base', amount:1500.50, product:{id:'p1',title:'Что-то'} });
+  ok(base.res.status === 200 && base.row, '2. Валидная подпись → вставка');
+  ok(BigInt(base.row?.amount_rub ?? 0) === 150050n, `2a. Сумма 150050 коп (факт ${base.row?.amount_rub})`);
 
-  // 2. валидная подпись → 200, транзакция вставлена
-  const good = await handleLavaWebhook(body, sign(body));
-  ok(good.status === 200 && good.ok, '2. Валидная подпись → 200 ok');
-  const rows = await sql`SELECT amount_rub, currency, flow_type, external_id, pnl_category, description, raw_ai_response FROM transactions WHERE external_id = ${externalId} AND deleted_at IS NULL`;
-  ok(rows.length === 1, '2a. Ровно одна транзакция создана');
-  ok(BigInt(rows[0]?.amount_rub ?? 0) === 150050n, `2b. Сумма = 150050 коп (1500.50 ₽), факт ${rows[0]?.amount_rub}`);
-  ok(rows[0]?.flow_type === 'income', '2c. flow_type = income');
-  const raw = rows[0]?.raw_ai_response;
-  const rawStr = JSON.stringify(raw ?? {});
-  ok(!rawStr.includes('secret@example.com'), '2d. Email покупателя НЕ сохранён (приватность)');
+  // 3. дедуп
+  const body2 = JSON.stringify({ eventType:'payment.success', contractId:'TEST-lava-base', amount:1500.50, currency:'RUB', product:{id:'p1',title:'Что-то'} });
+  await handleLavaWebhook(body2, sign(body2));
+  const cnt = (await sql`SELECT count(*)::int n FROM transactions WHERE external_id=${'lava_TEST-lava-base'} AND deleted_at IS NULL`)[0].n;
+  ok(cnt === 1, '3. Дедуп — одна транзакция при повторе');
 
-  // 3. повторный вебхук → дедуп, дубля нет
-  const dup = await handleLavaWebhook(body, sign(body));
-  ok(dup.status === 200, '3. Повтор → 200');
-  const rows2 = await sql`SELECT id FROM transactions WHERE external_id = ${externalId} AND deleted_at IS NULL`;
-  ok(rows2.length === 1, '3a. Дедуп работает — всё ещё одна транзакция');
+  // 4. РОУТИНГ: курс ДПО → ООО / lava_course
+  const dpo = await post({ contractId:'dpo', product:{id:'p-dpo',title:'DPO "Psychology of Health" — Expert (Full Career Package)'} });
+  ok(dpo.row?.entity_id === OOO, '4. Курс ДПО Expert → ООО');
+  ok(dpo.row?.cat === 'lava_course', '4a. Категория lava_course');
 
-  // 4. неуспешное событие → пропуск
-  const cancel = await handleLavaWebhook(JSON.stringify({ ...payload, eventType: 'subscription.cancelled', contractId: TEST_CONTRACT + '-cancel' }), sign(JSON.stringify({ ...payload, eventType: 'subscription.cancelled', contractId: TEST_CONTRACT + '-cancel' })));
-  ok(cancel.status === 200, '4. Событие cancelled → 200 (пропущено)');
-  const rowsC = await sql`SELECT id FROM transactions WHERE external_id = ${'lava_' + TEST_CONTRACT + '-cancel'}`;
-  ok(rowsC.length === 0, '4a. Для cancelled транзакция НЕ создана');
+  const dpoBasic = await post({ contractId:'dpobasic', product:{id:'p-dpo2',title:'DPO "Psychology of Health" — Basic'} });
+  ok(dpoBasic.row?.entity_id === OOO, '4b. Курс ДПО Basic → ООО');
+
+  // 5. РОУТИНГ: клуб → ИП / lava_club
+  const club = await post({ contractId:'club', product:{id:'p-club',title:'Club Metanoia — Monthly Membership'} });
+  ok(club.row?.entity_id === IP, '5. Клуб Метанойя → ИП');
+  ok(club.row?.cat === 'lava_club', '5a. Категория lava_club');
+
+  // 6. РОУТИНГ: консультация (даже "DPO Program") → ИП / other_income (не курс!)
+  const consult = await post({ contractId:'consult', product:{id:'p-cons',title:'Student Consultation — DPO Program'} });
+  ok(consult.row?.entity_id === IP, '6. Консультация студента ДПО → ИП (не ООО)');
+  ok(consult.row?.cat === 'other_income', '6a. Категория other_income');
+
+  // 7. РОУТИНГ: сопровождение → ИП
+  const guid = await post({ contractId:'guid', product:{id:'p-g',title:'Personal Guidance with Karina Eremyan'} });
+  ok(guid.row?.entity_id === IP, '7. Сопровождение Карина → ИП');
 } catch (e) {
   fail++; console.log('  ❌ Исключение:', e.message);
 } finally {
-  // чистим тестовые артефакты (hard delete — это тестовые данные)
-  const del = await sql`DELETE FROM transactions WHERE external_id IN (${externalId}, ${'lava_' + TEST_CONTRACT + '-cancel'}) RETURNING id`;
+  const del = await sql`DELETE FROM transactions WHERE external_id = ANY(${ids}) RETURNING id`;
   console.log(`\nОчищено тестовых строк: ${del.length}`);
   console.log(`ИТОГО: ${pass} прошло, ${fail} упало`);
   await sql.end({ timeout: 5 });

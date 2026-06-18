@@ -42,25 +42,59 @@ import { sql } from '../../db/client.js';
 
 const log = childLogger({ handler: 'webhook:lava' });
 
-// ── Реальные ID юрлиц/направлений (см. SPEC) ──────────────────────────────
+// ── Реальные ID юрлиц (см. SPEC) ──────────────────────────────────────────
 const ENTITY_IP = '8355ee9e-11ed-4e73-8bcd-2dc0ff3c8068';
 const ENTITY_OOO = 'ce729bf9-649c-41c5-bbfd-ed0fb785c45d';
-const DIR_DPO = 'b17eb69e-4bd3-441f-8a0c-57734d56840c';
-const DIR_METANOIA = 'ac773f21-0f0d-4772-8baf-15cac941c122';
+
+/** Куда отнести платёж: юрлицо + (опц.) направление + категория P&L. */
+interface Routing {
+  entityId: string;
+  directionId: string | null;
+  categoryCode: string;
+}
 
 /**
- * Маппинг product.id (оффер Lava.top) → юрлицо/направление/категория.
+ * Правило (решение владельца, 2026-06): ТОЛЬКО курсы ДПО → ООО;
+ * всё остальное (клуб, сопровождение, консультации) → ИП.
  *
- * TODO(Карина): вписать реальные product.id из ЛК Lava.top → Products.
- *   Курс ДПО  → ИП  / DPO      / lava_course
- *   Клуб      → ООО / METANOIA / lava_club
- * Пока маппинг пуст — немаппированные платежи падают на дефолтное юрлицо
- * источника (ИП) с категорией other_income (доход не теряется, см. fallback).
+ * Точное сопоставление по product.id (offer_id). Заполнять, когда продукты
+ * заведены в app.lava.top — API НЕ умеет создавать продукты. Пока пусто —
+ * работает маршрутизация по названию (routeByTitle) + дефолт на ИП.
+ *
+ * Карта офферов (названия из LAVATOP_SPEC.md):
+ *   ООО / lava_course:  «DPO Psychology of Health — Basic / Professional / Expert»
+ *   ИП  / lava_club:    «Club Metanoia — Monthly Membership»
+ *   ИП  / other_income: сопровождение и консультации (Karina/специалисты/студенты ДПО)
  */
-const OFFER_MAP: Record<string, { entityId: string; directionId: string; categoryCode: string }> = {
-  // 'PRODUCT_ID_КУРС': { entityId: ENTITY_IP,  directionId: DIR_DPO,      categoryCode: 'lava_course' },
-  // 'PRODUCT_ID_КЛУБ': { entityId: ENTITY_OOO, directionId: DIR_METANOIA, categoryCode: 'lava_club' },
+const OFFER_MAP: Record<string, Routing> = {
+  // '<offer_id ДПО Basic>':        { entityId: ENTITY_OOO, directionId: null, categoryCode: 'lava_course' },
+  // '<offer_id ДПО Professional>': { entityId: ENTITY_OOO, directionId: null, categoryCode: 'lava_course' },
+  // '<offer_id ДПО Expert>':       { entityId: ENTITY_OOO, directionId: null, categoryCode: 'lava_course' },
+  // '<offer_id Club Metanoia>':    { entityId: ENTITY_IP,  directionId: null, categoryCode: 'lava_club' },
+  // остальные офферы (сопровождение/консультации) → ИП / other_income (см. routeByTitle/дефолт)
 };
+
+/**
+ * Маршрут по названию продукта (когда offer_id ещё не вписан в OFFER_MAP).
+ * Реализует правило владельца: курс ДПО (Basic/Professional/Expert) → ООО,
+ * клуб → ИП (категория «клуб»), остальное → ИП (дефолт, см. handler).
+ */
+function routeByTitle(title: string): Routing | null {
+  const t = title.toLowerCase();
+  const isConsult = /consult|консультац/.test(t);
+  const isDpo = /dpo|дпо|psychology of health/.test(t);
+  const isCourseTier = /basic|professional|expert|базов|проф|эксперт/.test(t);
+  // Курс ДПО (тариф Basic/Professional/Expert), НЕ консультация → ООО
+  if (isDpo && isCourseTier && !isConsult) {
+    return { entityId: ENTITY_OOO, directionId: null, categoryCode: 'lava_course' };
+  }
+  // Клуб Метанойя → ИП, категория «клуб»
+  if (/club|клуб|metanoia|метанойя/.test(t)) {
+    return { entityId: ENTITY_IP, directionId: null, categoryCode: 'lava_club' };
+  }
+  // Сопровождение/консультации и прочее → дефолт (ИП / other_income) в handler
+  return null;
+}
 
 /** События успешной оплаты, по которым создаём доход. */
 const SUCCESS_EVENTS = new Set<string>([
@@ -185,27 +219,22 @@ export async function handleLavaWebhook(rawBody: string, signature: string): Pro
   const productId = payload.product?.id ?? '';
   const productTitle = payload.product?.title ?? '';
 
-  // Маппинг продукта → юрлицо/направление/категория (иначе fallback)
-  const mapped = productId ? OFFER_MAP[productId] : undefined;
+  // Маршрутизация: точный offer_id → по названию → дефолт (ИП / прочий доход).
+  // Правило владельца: только курсы ДПО → ООО, всё остальное → ИП.
+  const routing = (productId ? OFFER_MAP[productId] : undefined) ?? routeByTitle(productTitle);
   let entityId: string;
   let directionId: string | null;
   let categoryCode: string;
 
-  if (mapped) {
-    entityId = mapped.entityId;
-    directionId = mapped.directionId;
-    categoryCode = mapped.categoryCode;
+  if (routing) {
+    entityId = routing.entityId;
+    directionId = routing.directionId;
+    categoryCode = routing.categoryCode;
   } else {
-    const srcRows = await sql<{ entity_id: string | null }[]>`
-      SELECT entity_id FROM sources WHERE code = 'lava' LIMIT 1
-    `;
-    entityId = srcRows[0]?.entity_id ?? ENTITY_IP;
+    entityId = ENTITY_IP;
     directionId = null;
     categoryCode = 'other_income';
-    log.warn(
-      { source: 'lava', product_id_present: Boolean(productId) },
-      'lava_webhook_offer_unmapped_fallback'
-    );
+    log.info({ source: 'lava', product_id_present: Boolean(productId) }, 'lava_webhook_routed_default_ip');
   }
 
   // categoryId по коду (последовательно)
@@ -243,7 +272,7 @@ export async function handleLavaWebhook(rawBody: string, signature: string): Pro
   });
 
   log.info(
-    { source: 'lava', event_type: payload.eventType, inserted, mapped: Boolean(mapped) },
+    { source: 'lava', event_type: payload.eventType, inserted, entity: entityId === ENTITY_OOO ? 'ooo' : 'ip', category: categoryCode },
     'lava_webhook_processed'
   );
 
