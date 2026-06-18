@@ -67,11 +67,18 @@ interface Routing {
  *   ИП  / other_income: сопровождение и консультации (Karina/специалисты/студенты ДПО)
  */
 const OFFER_MAP: Record<string, Routing> = {
-  // '<offer_id ДПО Basic>':        { entityId: ENTITY_OOO, directionId: null, categoryCode: 'lava_course' },
-  // '<offer_id ДПО Professional>': { entityId: ENTITY_OOO, directionId: null, categoryCode: 'lava_course' },
-  // '<offer_id ДПО Expert>':       { entityId: ENTITY_OOO, directionId: null, categoryCode: 'lava_course' },
-  // '<offer_id Club Metanoia>':    { entityId: ENTITY_IP,  directionId: null, categoryCode: 'lava_club' },
-  // остальные офферы (сопровождение/консультации) → ИП / other_income (см. routeByTitle/дефолт)
+  // Курсы ДПО → ООО / lava_course
+  '23b0f5e3-8b5f-4a01-b74d-ca8dede00089': { entityId: ENTITY_OOO, directionId: null, categoryCode: 'lava_course' }, // ДПО Эксперт
+  '096476fd-3208-46c3-a435-a4a173279365': { entityId: ENTITY_OOO, directionId: null, categoryCode: 'lava_course' }, // ДПО Профи
+  'a6c9303c-7b45-4712-a4ac-e2cdee281570': { entityId: ENTITY_OOO, directionId: null, categoryCode: 'lava_course' }, // ДПО Базовый
+  // Клуб Метанойя → ИП / lava_club
+  'ceef20f2-e57c-42a7-9ca4-5f7962d7e792': { entityId: ENTITY_IP, directionId: null, categoryCode: 'lava_club' }, // Клуб Метанойя (подписка)
+  // Сопровождение и консультации → ИП / other_income
+  'ce9f74c8-ec05-42a1-8543-cdb66e7d92bc': { entityId: ENTITY_IP, directionId: null, categoryCode: 'other_income' }, // Сопровождение с Кариной
+  '6cb77376-26b7-4af1-a237-12d1e54cbf2e': { entityId: ENTITY_IP, directionId: null, categoryCode: 'other_income' }, // Сопровождение с ГНМ-специалистом
+  'dde305b5-d743-40b1-8801-741ab651f1d8': { entityId: ENTITY_IP, directionId: null, categoryCode: 'other_income' }, // Сопровождение с Дарьей (клуб)
+  '91c72d01-967e-4753-862a-7612a8a80585': { entityId: ENTITY_IP, directionId: null, categoryCode: 'other_income' }, // Консультация с Кариной
+  'cbc5f908-6d63-4a98-aa9f-91812991e08d': { entityId: ENTITY_IP, directionId: null, categoryCode: 'other_income' }, // Консультация с ГНМ-специалистом
 };
 
 /**
