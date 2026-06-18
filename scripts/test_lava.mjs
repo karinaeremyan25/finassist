@@ -25,15 +25,22 @@ const post = async (over) => {
   const cid = 'TEST-lava-' + (over.contractId || Math.abs([...JSON.stringify(over)].reduce((a,c)=>a*31+c.charCodeAt(0)|0,7)));
   const body = JSON.stringify({ eventType:'payment.success', contractId:cid, amount:1000, currency:'RUB', timestamp:'2026-06-17T10:00:00Z', buyer:{email:'x@y.z'}, ...over, contractId:cid });
   ids.push('lava_' + cid);
-  const res = await handleLavaWebhook(body, sign(body));
+  // авторизация по «API key» (секрет в произвольном заголовке)
+  const res = await handleLavaWebhook(body, { candidates: [SECRET] });
   const row = (await sql`SELECT t.entity_id, c.code AS cat, t.amount_rub FROM transactions t LEFT JOIN categories c ON c.id=t.category_id WHERE t.external_id=${'lava_'+cid} AND t.deleted_at IS NULL`)[0];
   return { res, row };
 };
 
 try {
-  // 1. подпись
-  const bad = await handleLavaWebhook('{"eventType":"payment.success","contractId":"x","amount":1,"currency":"RUB"}', 'deadbeef');
-  ok(bad.status === 400, '1. Плохая подпись → 400');
+  // 1. неверная авторизация → 400
+  const bad = await handleLavaWebhook('{"eventType":"payment.success","contractId":"x","amount":1,"currency":"RUB"}', { candidates: ['wrong-secret'] });
+  ok(bad.status === 400, '1. Неверный секрет → 400');
+
+  // 1b. HMAC-подпись тоже принимается
+  const hbody = JSON.stringify({ eventType:'payment.success', contractId:'TEST-lava-hmac', amount:10, currency:'RUB', product:{id:'p',title:'x'} });
+  ids.push('lava_TEST-lava-hmac');
+  const hres = await handleLavaWebhook(hbody, { signature: sign(hbody) });
+  ok(hres.status === 200, '1b. HMAC-подпись → 200');
 
   // 2. базовая вставка + сумма + приватность
   const base = await post({ contractId:'base', amount:1500.50, product:{id:'p1',title:'Что-то'} });

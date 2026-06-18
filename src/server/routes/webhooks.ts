@@ -82,13 +82,19 @@ export const lavaWebhookHandler: ApiHandler = async (req): Promise<ApiResponse> 
     return { status: 400, body: null, rawBody: 'bad sign', contentType: 'text/plain; charset=utf-8' };
   }
 
-  // Подпись Lava.top приходит в заголовке `signature`
-  const sigHeader = req.rawReq.headers['signature'];
+  // Lava (режим «API key of your service») присылает секрет в каком-то заголовке —
+  // имя не документировано, поэтому собираем значения ВСЕХ заголовков как кандидаты.
+  // Заголовок `signature` отдаём отдельно для HMAC-режима (если Lava подписывает тело).
+  const headers = req.rawReq.headers;
+  const flat = (v: string | string[] | undefined): string[] =>
+    v === undefined ? [] : Array.isArray(v) ? v : [v];
+  const sigHeader = headers['signature'];
   const signature = Array.isArray(sigHeader) ? (sigHeader[0] ?? '') : (sigHeader ?? '');
+  const candidates = Object.values(headers).flatMap(flat);
 
   let result: Awaited<ReturnType<typeof handleLavaWebhook>>;
   try {
-    result = await handleLavaWebhook(rawBody, signature);
+    result = await handleLavaWebhook(rawBody, { signature, candidates });
   } catch (err) {
     log.error(
       { source: 'lava', latency_ms: Date.now() - startMs, err_name: err instanceof Error ? err.name : 'unknown' },

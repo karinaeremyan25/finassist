@@ -136,19 +136,59 @@ export interface WebhookResult {
   status: number;
 }
 
-// ── Подпись ───────────────────────────────────────────────────────────────
+// ── Авторизация вебхука ─────────────────────────────────────────────────────
+
+/** Данные аутентификации входящего вебхука Lava.top. */
+export interface LavaAuthHeaders {
+  /** HMAC-SHA256(rawBody) hex — заголовок `signature` (SDK-режим, если используется). */
+  signature?: string;
+  /**
+   * Значения ВСЕХ входящих заголовков (строкой). Lava в режиме
+   * «API key of your service» присылает секрет в каком-то заголовке —
+   * имя заголовка не документировано, поэтому проверяем все значения.
+   */
+  candidates?: string[];
+}
+
+/** Constant-time сравнение двух строк. */
+function safeEqual(a: string, b: string): boolean {
+  const ba = Buffer.from(a, 'utf8');
+  const bb = Buffer.from(b, 'utf8');
+  if (ba.length !== bb.length) return false;
+  return crypto.timingSafeEqual(ba, bb);
+}
 
 /**
- * Проверяет подпись Lava.top: HMAC-SHA256(rawBody, secret) hex == header `signature`.
- * Сравнение constant-time, регистр hex не важен.
+ * Проверяет HMAC-подпись Lava.top: HMAC-SHA256(rawBody, secret) hex == `signature`.
+ * Регистр hex не важен, сравнение constant-time.
  */
 export function verifyLavaSignature(rawBody: string, signature: string, secret: string): boolean {
   if (!signature) return false;
   const expected = crypto.createHmac('sha256', secret).update(rawBody, 'utf8').digest('hex');
-  const exp = Buffer.from(expected.toLowerCase(), 'utf8');
-  const got = Buffer.from(signature.toLowerCase(), 'utf8');
-  if (exp.length !== got.length) return false;
-  return crypto.timingSafeEqual(exp, got);
+  return safeEqual(expected.toLowerCase(), signature.toLowerCase());
+}
+
+/**
+ * Авторизует вебхук Lava.top. ЛК Lava предлагает аутентификацию вебхука
+ * «API key of your service» — секрет приходит в заголовке (имя не
+ * документировано). Принимаем запрос, если предъявлено знание
+ * `LAVA_WEBHOOK_SECRET` любым из способов:
+ *   1) `signature` = HMAC-SHA256(rawBody, secret)  (если Lava подписывает тело)
+ *   2) любой входящий заголовок == secret  или  `Bearer <secret>`  (режим «API key»)
+ */
+export function authorizeLavaWebhook(
+  rawBody: string,
+  auth: LavaAuthHeaders,
+  secret: string
+): boolean {
+  if (auth.signature && verifyLavaSignature(rawBody, auth.signature, secret)) return true;
+  const bearer = `Bearer ${secret}`;
+  for (const value of auth.candidates ?? []) {
+    if (!value) continue;
+    if (safeEqual(value, secret)) return true;
+    if (value.length === bearer.length && safeEqual(value, bearer)) return true;
+  }
+  return false;
 }
 
 // ── Вспомогательные ───────────────────────────────────────────────────────
@@ -172,21 +212,26 @@ function normalizeDate(ts: string | undefined): string {
 /**
  * Обрабатывает входящий Lava.top webhook.
  * @param rawBody — сырое тело запроса (нужно для HMAC; нельзя пере-сериализовать).
- * @param signature — значение заголовка `signature`.
+ * @param auth — заголовки аутентификации (signature / X-Api-Key / Authorization).
+ *   Для обратной совместимости допускается строка = значение заголовка `signature`.
  */
-export async function handleLavaWebhook(rawBody: string, signature: string): Promise<WebhookResult> {
+export async function handleLavaWebhook(
+  rawBody: string,
+  auth: LavaAuthHeaders | string
+): Promise<WebhookResult> {
+  const authHeaders: LavaAuthHeaders = typeof auth === 'string' ? { signature: auth } : auth;
   const secret = config.LAVA_WEBHOOK_SECRET;
   if (!secret) {
     log.warn({ source: 'lava' }, 'lava_webhook_secret_missing');
     return { ok: false, status: 400, responseBody: 'bad sign' };
   }
 
-  // Проверка подписи
-  if (!verifyLavaSignature(rawBody, signature, secret)) {
-    log.warn({ source: 'lava', signature_ok: false }, 'lava_webhook_bad_signature');
+  // Авторизация (любой режим Lava: HMAC-подпись / API key / Authorization)
+  if (!authorizeLavaWebhook(rawBody, authHeaders, secret)) {
+    log.warn({ source: 'lava', auth_ok: false }, 'lava_webhook_unauthorized');
     return { ok: false, status: 400, responseBody: 'bad sign' };
   }
-  log.info({ source: 'lava', signature_ok: true }, 'lava_webhook_signature_ok');
+  log.info({ source: 'lava', auth_ok: true }, 'lava_webhook_authorized');
 
   // Парсинг JSON
   let json: unknown;
