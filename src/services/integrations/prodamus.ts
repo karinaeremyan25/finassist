@@ -4,12 +4,25 @@ import { config } from '../../config.js';
 import { childLogger } from '../../utils/logger.js';
 import { toKopecks } from '../../utils/money.js';
 import type { RawSourceTransaction } from './types.js';
-import {
-  insertSyncTransactions,
-  getActiveProdamusMappings,
-  type ProductMappingRow,
-} from '../../db/repositories/integrations.js';
+import { insertSyncTransactions } from '../../db/repositories/integrations.js';
 import { sql } from '../../db/client.js';
+
+/** UUID ИП Карина Еремян и ООО Ассургина. */
+const ENTITY_IP = '8355ee9e-11ed-4e73-8bcd-2dc0ff3c8068';
+const ENTITY_OOO = 'ce729bf9-649c-41c5-bbfd-ed0fb785c45d';
+
+/**
+ * Маршрут продажи Продамуса по названию продукта (решение владельца):
+ * курс ДПО «Психология здоровья» → ООО / prodamus_course;
+ * клуб «Метанойя» и всё прочее → ИП / prodamus_club.
+ */
+function routeProdamusProduct(name: string): { entityId: string; categoryCode: string } {
+  const t = name.toLowerCase();
+  if (/курс/.test(t) && /психолог/.test(t)) {
+    return { entityId: ENTITY_OOO, categoryCode: 'prodamus_course' };
+  }
+  return { entityId: ENTITY_IP, categoryCode: 'prodamus_club' };
+}
 
 /**
  * Prodamus — webhook-приёмник (push модель).
@@ -163,32 +176,6 @@ function normalizeDate(raw: string): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-/** Маппинг product_name → {directionId, entityId, categoryId}. */
-function applyProductMapping(
-  productName: string,
-  mappings: ProductMappingRow[]
-): { directionId: string | null; entityId: string | null; categoryId: string | null } {
-  const lower = productName.toLowerCase();
-  for (const m of mappings) {
-    let matched = false;
-    if (m.matchType === 'exact') {
-      matched = productName === m.productPattern;
-    } else if (m.matchType === 'contains') {
-      matched = lower.includes(m.productPattern.toLowerCase());
-    } else if (m.matchType === 'regex') {
-      try {
-        matched = new RegExp(m.productPattern, 'i').test(productName);
-      } catch {
-        matched = false;
-      }
-    }
-    if (matched) {
-      return { directionId: m.directionId, entityId: m.entityId, categoryId: m.categoryId };
-    }
-  }
-  return { directionId: null, entityId: null, categoryId: null };
-}
-
 // ── Обработчик webhook ────────────────────────────────────────────────────
 
 /**
@@ -252,9 +239,13 @@ export async function handleProdamusWebhook(
   const firstProduct = payload.products[0];
   const productName = firstProduct?.name ?? '';
 
-  // Маппинг через prodamus_product_mapping
-  const mappings = await getActiveProdamusMappings();
-  const mapping = applyProductMapping(productName, mappings);
+  // Маршрут по продукту: курс ДПО → ООО / prodamus_course; клуб → ИП / prodamus_club
+  const route = routeProdamusProduct(productName);
+  const catRows = await sql<{ id: string }[]>`
+    SELECT id FROM categories WHERE code = ${route.categoryCode} AND deleted_at IS NULL LIMIT 1
+  `;
+  const categoryId = catRows[0]?.id ?? null;
+  const entityId = route.entityId;
 
   // Валюта
   const currency = payload.currency.toUpperCase() === 'RUB' ? 'RUB' : 'RUB'; // Prodamus обычно rub/RUB
@@ -270,24 +261,12 @@ export async function handleProdamusWebhook(
       orderNum: payload.order_num ?? null,
       productsCount: payload.products.length,
       productName,
-      directionId: mapping.directionId,
-      entityId: mapping.entityId,
-      categoryId: mapping.categoryId,
+      entityId,
+      categoryId,
       // НЕ включаем customer_email, customer_phone, sum
     },
+    needsClassification: false,
   };
-
-  // entity_id из sources
-  const entityRows = await sql<{ entity_id: string | null }[]>`
-    SELECT entity_id FROM sources WHERE code = 'prodamus' LIMIT 1
-  `;
-  const defaultEntityId = entityRows[0]?.entity_id;
-  const entityId = mapping.entityId ?? defaultEntityId;
-
-  if (!entityId) {
-    log.warn({ source: 'prodamus' }, 'prodamus_webhook_entity_id_missing');
-    return { ok: false, status: 500, responseBody: 'bad sign' };
-  }
 
   // created_by = OWNER_TG_ID (bigint) — реальная схема БД (transactions.created_by BIGINT)
   const createdBy: bigint = config.OWNER_TG_ID;
@@ -297,8 +276,8 @@ export async function handleProdamusWebhook(
     transactions: [tx],
     createdBy,
     entityId,
-    directionId: mapping.directionId,
-    categoryId: mapping.categoryId,
+    directionId: null,
+    categoryId,
     flowType: 'income',
   });
 

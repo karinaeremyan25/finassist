@@ -662,6 +662,13 @@ export async function syncTochka(
       // Пропускаем внутренние переводы
       if (isOwn(tx, myNums)) continue;
 
+      // Пропускаем ЗАЧИСЛЕНИЯ от Продамуса: доход Продамуса учитывается
+      // по каждой продаже (вебхук/выгрузка) с разбивкой ДПО→ООО / клуб→ИП.
+      // Банковское зачисление — это выплата уже учтённых продаж (иначе двойной счёт).
+      if (tx.creditDebitIndicator === 'Credit' && /продамус/i.test(tx.DebtorParty?.name ?? '')) {
+        continue;
+      }
+
       // Проверяем, что сумма положительная (как в скрипте)
       const rubStr = tx.Amount?.amount ?? '0';
       const rub = Number(rubStr);
