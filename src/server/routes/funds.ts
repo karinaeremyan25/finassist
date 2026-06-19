@@ -41,7 +41,11 @@ const FundRowSchema = z.object({
   code: z.string(),
   name: z.string(),
   balance: z.bigint().nullable(),
+  entity_id: z.string().nullable(),
+  tochka_account_id: z.string().nullable(),
 });
+
+const ENTITY_IP_ID = '8355ee9e-11ed-4e73-8bcd-2dc0ff3c8068';
 
 const FundTxRowSchema = z.object({
   fund_id: z.string(),
@@ -64,6 +68,10 @@ interface FundItem {
   code: string;
   name: string;
   balance: bigint;
+  /** Юрлицо счёта: 'ip' | 'ooo' (для группировки ООО→ИП). */
+  entity: 'ip' | 'ooo';
+  /** Последние 4 цифры номера счёта (или null, если счёт не привязан). */
+  account: string | null;
   recentMovements: FundMovement[];
 }
 
@@ -90,12 +98,23 @@ export const fundsHandler: ApiHandler = async (req): Promise<ApiResponse> => {
       code: string;
       name: string;
       balance: bigint | null;
+      entity_id: string | null;
+      tochka_account_id: string | null;
     }>>`
-      SELECT id, code, name, COALESCE(balance, 0)::bigint AS balance
+      SELECT id, code, name, COALESCE(balance, 0)::bigint AS balance, entity_id, tochka_account_id
       FROM funds
       WHERE deleted_at IS NULL
         AND is_active = true
-      ORDER BY code ASC
+      ORDER BY CASE code
+        WHEN 'rs_ooo' THEN 1
+        WHEN 'ooo_acc2' THEN 2
+        WHEN 'rs_ip' THEN 3
+        WHEN 'gratitude' THEN 4
+        WHEN 'credit' THEN 5
+        WHEN 'reserve_ip' THEN 6
+        WHEN 'land' THEN 7
+        WHEN 'tax_ip' THEN 8
+        ELSE 99 END ASC, balance DESC
     `;
 
     // Валидируем строки через Zod
@@ -133,11 +152,14 @@ export const fundsHandler: ApiHandler = async (req): Promise<ApiResponse> => {
         kind: tx.amount >= 0n ? 'in' : 'out',
       }));
 
+      const acctNum = (fund.tochka_account_id ?? '').split('/')[0] ?? '';
       funds.push({
         id: fund.id,
         code: fund.code,
         name: fund.name,
         balance: fund.balance ?? 0n,
+        entity: fund.entity_id === ENTITY_IP_ID ? 'ip' : 'ooo',
+        account: acctNum ? acctNum.slice(-4) : null,
         recentMovements,
       });
     }

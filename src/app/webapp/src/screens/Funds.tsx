@@ -3,7 +3,6 @@
 import { useState } from 'react';
 import { ChevronDown, Landmark } from 'lucide-react';
 import { Header } from '../components/Header';
-import { SectionHeader } from '../components/AppLayout';
 import { Skeleton, ErrorState } from '../components/States';
 import { useAsync } from '../lib/useAsync';
 import { api } from '../lib/api';
@@ -12,19 +11,9 @@ import { formatDateShort } from '../lib/dates';
 import { hapticSelection } from '../lib/telegram';
 import type { FundCard as FundCardData, FundMovement } from '../lib/types';
 
-/** «Пустые» фонды (нулевой баланс без движений) — в самый низ. */
-function isEmptyFund(f: FundCardData): boolean {
-  return f.balance === 0 && f.recentMovements.length === 0;
-}
-
-/** Сортировка: непустые по убыванию баланса, пустые — вниз. */
-function sortFunds(funds: FundCardData[]): FundCardData[] {
-  return [...funds].sort((a, b) => {
-    const ae = isEmptyFund(a);
-    const be = isEmptyFund(b);
-    if (ae !== be) return ae ? 1 : -1;
-    return b.balance - a.balance;
-  });
+/** Сумма балансов группы (копейки). */
+function groupTotal(funds: FundCardData[]): number {
+  return funds.reduce((s, f) => s + f.balance, 0);
 }
 
 export function Funds() {
@@ -39,8 +28,6 @@ export function Funds() {
           Балансы фондов и последние движения по ним.
         </p>
 
-        <SectionHeader title="Фонды" />
-
         {funds.status === 'loading' ? (
           <div className="flex flex-col gap-3">
             {Array.from({ length: 3 }).map((_, i) => (
@@ -50,16 +37,40 @@ export function Funds() {
         ) : funds.status === 'error' ? (
           <ErrorState message={funds.error ?? undefined} onRetry={funds.reload} />
         ) : funds.data && funds.data.funds.length > 0 ? (
-          <div className="flex flex-col gap-3">
-            {sortFunds(funds.data.funds).map((fund) => (
-              <FundCard key={fund.id} fund={fund} />
-            ))}
-          </div>
+          <FundsByEntity funds={funds.data.funds} />
         ) : (
           <FundsEmpty />
         )}
       </section>
     </>
+  );
+}
+
+/** Группировка счетов: сначала ООО, потом ИП — с подытогом по каждому. */
+function FundsByEntity({ funds }: { funds: FundCardData[] }) {
+  const ooo = funds.filter((f) => f.entity === 'ooo');
+  const ip = funds.filter((f) => f.entity === 'ip');
+  return (
+    <div className="flex flex-col gap-6">
+      {ooo.length > 0 ? <EntityGroup title="ООО Ассургина" funds={ooo} /> : null}
+      {ip.length > 0 ? <EntityGroup title="ИП Еремян" funds={ip} /> : null}
+    </div>
+  );
+}
+
+function EntityGroup({ title, funds }: { title: string; funds: FundCardData[] }) {
+  return (
+    <div>
+      <div className="mb-2 flex items-baseline justify-between">
+        <h2 className="text-[13px] font-semibold uppercase tracking-[0.04em] text-ink-muted">{title}</h2>
+        <span className="num text-[15px] font-bold text-ink">{rubles(groupTotal(funds))}</span>
+      </div>
+      <div className="flex flex-col gap-3">
+        {funds.map((fund) => (
+          <FundCard key={fund.id} fund={fund} />
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -93,6 +104,9 @@ function FundCard({ fund }: { fund: FundCardData }) {
           <p className="num mt-1 text-[26px] font-bold leading-[30px] text-ink">
             {rubles(fund.balance)}
           </p>
+          {fund.account ? (
+            <p className="num mt-0.5 text-[11px] text-ink-faint">счёт ···{fund.account}</p>
+          ) : null}
         </div>
         {hasMovements ? (
           <ChevronDown

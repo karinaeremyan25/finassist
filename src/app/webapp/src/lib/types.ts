@@ -93,6 +93,10 @@ export interface FundCard {
   name: string;
   /** Баланс фонда, в копейках. */
   balance: number;
+  /** Юрлицо счёта: 'ip' | 'ooo'. */
+  entity: 'ip' | 'ooo';
+  /** Последние 4 цифры номера счёта (или null). */
+  account: string | null;
   recentMovements: FundMovement[];
 }
 
