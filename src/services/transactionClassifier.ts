@@ -54,6 +54,12 @@ type Category = (typeof ALL_CATEGORIES)[number];
 
 const PERSONAL_SET = new Set<string>(PERSONAL_CATEGORIES);
 
+/**
+ * Известные получатели зарплаты (ФОТ) — переводы им всегда payroll,
+ * независимо от мнения модели. Дополнять по мере появления сотрудников.
+ */
+const PAYROLL_PAYEES = /сунчелеев|суншелеев/i;
+
 export interface TxToClassify {
   id: string;
   counterparty: string | null;
@@ -181,6 +187,10 @@ async function classifyBatch(batch: TxToClassify[]): Promise<TxClassification[]>
     }
 
     const result = batch.map((tx): TxClassification => {
+      // Детерминированный override: переводы известным сотрудникам → ФОТ.
+      if (tx.counterparty && PAYROLL_PAYEES.test(tx.counterparty)) {
+        return { id: tx.id, pnlCategory: 'payroll', confidence: 1, isPersonal: false };
+      }
       const item = byId.get(tx.id);
       if (item === undefined) {
         // Claude пропустил транзакцию — безопасный фолбэк по этой одной.

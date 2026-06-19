@@ -27,7 +27,7 @@ import { SectionHeader } from '../components/AppLayout';
 import { Skeleton, ErrorState, EmptyState } from '../components/States';
 import { useAsync } from '../lib/useAsync';
 import { api } from '../lib/api';
-import { rubles, rublesCompact, percentSigned } from '../lib/money';
+import { rubles, rublesCompact, rublesSigned, percentSigned } from '../lib/money';
 import {
   currentMonthYm,
   currentYear,
@@ -267,12 +267,46 @@ function MonthView({ entity, month }: { entity: PnlEntity; month: string }) {
   return (
     <div className="flex flex-col gap-6">
       <KpiGrid data={data} />
+      {entity === 'total' ? <EntityProfitSummary month={month} /> : null}
       <IncomeBlock data={data} />
       <ExpenseBlock data={data} />
       <NetProfitBlock data={data} />
       <PersonalBlock
         total={personal.status === 'success' ? personal.data?.total ?? 0 : 0}
       />
+    </div>
+  );
+}
+
+/** Сводка прибыли по юрлицам (только на вкладке «Сводный»). */
+function EntityProfitSummary({ month }: { month: string }) {
+  const ip = useAsync(() => api.pnl('ip', month), [month]);
+  const ooo = useAsync(() => api.pnl('ooo', month), [month]);
+  if (ip.status !== 'success' || ooo.status !== 'success' || !ip.data || !ooo.data) return null;
+  const ipP = ip.data.profit;
+  const oooP = ooo.data.profit;
+  const tot = ipP + oooP;
+  const Row = ({ label, v, bold }: { label: string; v: number; bold?: boolean }) => (
+    <div className={`flex items-center justify-between ${bold ? 'border-t border-white/10 pt-2 mt-1' : ''}`}>
+      <span className={`text-[13px] ${bold ? 'font-semibold text-ink' : 'text-ink-muted'}`}>{label}</span>
+      <span
+        className={`num text-[14px] ${bold ? 'font-bold' : 'font-semibold'}`}
+        style={{ color: v >= 0 ? 'var(--income)' : 'var(--expense)' }}
+      >
+        {rublesSigned(v)}
+      </span>
+    </div>
+  );
+  return (
+    <div className="rounded-md bg-surface-2 p-4">
+      <h3 className="mb-2 text-[13px] font-medium uppercase tracking-[0.04em] text-ink-faint">
+        Прибыль по юрлицам
+      </h3>
+      <div className="flex flex-col gap-1.5">
+        <Row label="ИП Еремян" v={ipP} />
+        <Row label="ООО Ассургина" v={oooP} />
+        <Row label="Итого (суммарно)" v={tot} bold />
+      </div>
     </div>
   );
 }
