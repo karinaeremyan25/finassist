@@ -368,7 +368,7 @@ export async function getDailyRevenueExpenseHistory(
 }
 
 /** Человекочитаемые названия pnl_category для разбивки расходов. */
-const PNL_CATEGORY_LABELS: Record<string, string> = {
+export const PNL_CATEGORY_LABELS: Record<string, string> = {
   payroll: 'ФОТ (зарплаты)',
   marketing: 'Реклама и маркетинг',
   subscriptions: 'Подписки и сервисы',
@@ -580,6 +580,94 @@ export async function getTransactionList(
     })),
     total,
   };
+}
+
+// ── Экспорт операций (CSV) ──────────────────────────────────────────────────
+
+export interface ExportRow {
+  occurredAt: string;
+  entityName: string | null;
+  directionName: string | null;
+  pnlCategory: string | null;
+  categoryName: string | null;
+  counterparty: string | null;
+  description: string | null;
+  flowType: string;
+  amountRub: bigint;
+  isPersonal: boolean;
+  sourceCode: string | null;
+}
+
+/**
+ * Все операции за период (без пагинации) для выгрузки в CSV — чтобы вручную
+ * сверять, как собираются итоги. Включает юрлицо, направление, реальную
+ * категорию (pnl_category), контрагента, сумму, источник.
+ */
+export async function getTransactionsForExport(params: {
+  dateFrom: string;
+  dateTo: string;
+  entityId?: string | null;
+  directionId?: string | null;
+}): Promise<ExportRow[]> {
+  const { dateFrom, dateTo, entityId, directionId } = params;
+  const entityFilter =
+    entityId !== null && entityId !== undefined ? sql`AND t.entity_id = ${entityId}` : sql``;
+  const directionFilter =
+    directionId !== null && directionId !== undefined
+      ? sql`AND t.direction_id = ${directionId}`
+      : sql``;
+
+  const rows = await sql<{
+    occurred_at: string;
+    entity_name: string | null;
+    direction_name: string | null;
+    pnl_category: string | null;
+    category_name: string | null;
+    counterparty: string | null;
+    description: string | null;
+    flow_type: string;
+    amount_rub: bigint;
+    is_personal: boolean;
+    source_code: string | null;
+  }[]>`
+    SELECT
+      t.occurred_at::text AS occurred_at,
+      e.display_name AS entity_name,
+      d.display_name AS direction_name,
+      t.pnl_category,
+      c.display_name AS category_name,
+      t.counterparty,
+      t.description,
+      t.flow_type,
+      t.amount_rub,
+      t.is_personal,
+      s.code AS source_code
+    FROM transactions t
+    LEFT JOIN entities e ON e.id = t.entity_id
+    LEFT JOIN directions d ON d.id = t.direction_id
+    LEFT JOIN categories c ON c.id = t.category_id
+    LEFT JOIN sources s ON s.id = t.source_id
+    WHERE t.deleted_at IS NULL
+      AND t.occurred_at >= ${dateFrom}
+      AND t.occurred_at <= ${dateTo}
+      ${entityFilter}
+      ${directionFilter}
+    ORDER BY t.occurred_at ASC
+  `;
+
+  return rows.map((r) => ({
+    occurredAt: r.occurred_at,
+    entityName: r.entity_name,
+    directionName: r.direction_name,
+    pnlCategory: r.pnl_category,
+    categoryName: r.category_name,
+    counterparty: r.counterparty,
+    description: r.description,
+    flowType: r.flow_type,
+    amountRub: r.amount_rub,
+    isPersonal: r.is_personal,
+    sourceCode: r.source_code,
+  }));
 }
 
 // ── Grouped chart data ─────────────────────────────────────────────────────

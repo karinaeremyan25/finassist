@@ -7,7 +7,7 @@
 export { startHttpServer, stopHttpServer } from './http.js';
 import { Router } from './http.js';
 import { sessionHandler } from './routes/session.js';
-import { summaryHandler, chartsHandler, insightsHandler, transactionsHandler } from './routes/analytics.js';
+import { summaryHandler, chartsHandler, insightsHandler, transactionsHandler, exportHandler } from './routes/analytics.js';
 import { usersHandler } from './routes/users.js';
 import { aiChatHandler } from './routes/aiChat.js';
 import { robokassaWebhookHandler, prodamusWebhookHandler, lavaWebhookHandler } from './routes/webhooks.js';
@@ -54,6 +54,8 @@ export function buildRouter(): Router {
   router.get('/api/analytics/charts', chartsHandler);
   router.get('/api/analytics/insights', insightsHandler);
   router.get('/api/analytics/transactions', transactionsHandler);
+  // Выгрузка операций в CSV — бот присылает файл в чат
+  router.get('/api/analytics/export', exportHandler);
   router.get('/api/analytics/funds', fundsHandler);
 
   // Users

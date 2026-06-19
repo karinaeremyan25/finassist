@@ -1,5 +1,7 @@
 /** Экран Transactions (§9): список операций + фильтры период/юрлицо/направление. */
 
+import { useState } from 'react';
+import { Download } from 'lucide-react';
 import { Header } from '../components/Header';
 import { SectionHeader } from '../components/AppLayout';
 import { TransactionList } from '../components/TransactionList';
@@ -14,6 +16,22 @@ export function Transactions() {
   const { period, entity_id, direction_id } = useFilters();
   const { entities, directions } = useApp();
   const filters = { entity_id, direction_id };
+
+  const [exporting, setExporting] = useState(false);
+  const [exportMsg, setExportMsg] = useState<string | null>(null);
+  async function handleExport(): Promise<void> {
+    if (exporting) return;
+    setExporting(true);
+    setExportMsg(null);
+    try {
+      const r = await api.exportReport(period, filters);
+      setExportMsg(r.ok ? `Отчёт отправлен в чат с ботом (${r.rows ?? 0} операций)` : (r.error ?? 'Не удалось выгрузить'));
+    } catch {
+      setExportMsg('Ошибка выгрузки. Попробуйте позже.');
+    } finally {
+      setExporting(false);
+    }
+  }
 
   const summary = useAsync(
     () => api.summary(period, filters),
@@ -31,6 +49,18 @@ export function Transactions() {
       <section className="px-4 -mt-2">
         <h1 className="mb-3 text-[22px] font-semibold text-ink">Отчёты</h1>
         <FilterBar entities={entities} directions={directions} />
+        <button
+          type="button"
+          onClick={handleExport}
+          disabled={exporting}
+          className="mt-3 flex min-h-[40px] w-full items-center justify-center gap-2 rounded-md bg-surface-2 px-3 text-[14px] font-medium text-ink active:opacity-90 disabled:opacity-60"
+        >
+          <Download size={16} strokeWidth={2} className={exporting ? 'animate-pulse' : ''} />
+          {exporting ? 'Готовлю файл…' : 'Выгрузить в CSV (придёт в чат)'}
+        </button>
+        {exportMsg !== null ? (
+          <p className="mt-1 text-center text-[12px] text-ink-muted">{exportMsg}</p>
+        ) : null}
       </section>
 
       {/* Сводка периода */}

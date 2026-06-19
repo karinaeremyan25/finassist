@@ -15,7 +15,10 @@ import {
   getLoanExpenseMetrics,
   getGratitudeFundMetrics,
   getTransactionList,
+  getTransactionsForExport,
+  PNL_CATEGORY_LABELS,
 } from '../../db/repositories/analytics.js';
+import { config } from '../../config.js';
 import { getFundBalances, getFundDistribution } from '../../db/repositories/funds.js';
 import { getMiniAppFinancialOverview } from '../../services/miniApp.js';
 import { childLogger } from '../../utils/logger.js';
@@ -400,3 +403,105 @@ export const transactionsHandler: ApiHandler = async (req) => {
 
 // Keep invalidRequest available for potential future use
 export { invalidRequest };
+
+// ── GET /api/analytics/export — CSV всех операций ботом в чат ────────────────
+
+const ExportQuerySchema = z.object({
+  from: DateSchema,
+  to: DateSchema,
+  entity_id: z.string().uuid().optional(),
+  direction_id: z.string().uuid().optional(),
+});
+
+/** Экранирование значения для CSV (разделитель ;). */
+function csvCell(v: string | null | undefined): string {
+  const s = (v ?? '').replace(/\r?\n/g, ' ').trim();
+  return /[;"]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+/** Сумма в рублях с запятой-десятичным и знаком (расход — минус). */
+function csvAmount(amountRubKopecks: bigint, flowType: string): string {
+  const rub = Number(amountRubKopecks) / 100;
+  const signed = flowType === 'expense' ? -rub : rub;
+  return signed.toFixed(2).replace('.', ',');
+}
+
+/** Отправка CSV-файла ботом в чат пользователя (Telegram sendDocument). */
+async function sendCsvToChat(chatId: bigint, filename: string, csv: string, caption: string): Promise<boolean> {
+  const token = config.BOT_TOKEN;
+  // BOM для корректной кириллицы в Excel
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+  const form = new FormData();
+  form.append('chat_id', chatId.toString());
+  form.append('caption', caption);
+  form.append('document', blob, filename);
+  const res = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
+    method: 'POST',
+    body: form,
+  });
+  return res.ok;
+}
+
+export const exportHandler: ApiHandler = async (req): Promise<ApiResponse> => {
+  const start = Date.now();
+  try {
+    const user = await resolveWebAppUser(req);
+    const parsed = ExportQuerySchema.safeParse(req.query);
+    if (!parsed.success) return badFilter();
+    const { from, to, entity_id, direction_id } = parsed.data;
+
+    const rows = await getTransactionsForExport({
+      dateFrom: from,
+      dateTo: to,
+      entityId: entity_id ?? null,
+      directionId: direction_id ?? null,
+    });
+
+    // Сборка CSV
+    const header = ['Дата', 'Юрлицо', 'Направление', 'Категория', 'Тип', 'Сумма ₽', 'Контрагент', 'Описание', 'Источник'];
+    const lines: string[] = [header.join(';')];
+    let incomeTotal = 0n;
+    let expenseTotal = 0n;
+    for (const r of rows) {
+      if (r.flowType === 'income') incomeTotal += r.amountRub;
+      else expenseTotal += r.amountRub;
+      const category = r.isPersonal
+        ? 'Личное'
+        : r.flowType === 'income'
+          ? (r.categoryName ?? 'Доход')
+          : (r.pnlCategory ? (PNL_CATEGORY_LABELS[r.pnlCategory] ?? r.pnlCategory) : (r.categoryName ?? 'Прочее'));
+      lines.push([
+        csvCell(r.occurredAt.slice(0, 10)),
+        csvCell(r.entityName),
+        csvCell(r.directionName),
+        csvCell(category),
+        csvCell(r.flowType === 'income' ? 'доход' : 'расход'),
+        csvAmount(r.amountRub, r.flowType),
+        csvCell(r.counterparty),
+        csvCell(r.description),
+        csvCell(r.sourceCode),
+      ].join(';'));
+    }
+    // Итоги
+    lines.push('');
+    lines.push(['ИТОГО доход', '', '', '', '', (Number(incomeTotal) / 100).toFixed(2).replace('.', ',')].join(';'));
+    lines.push(['ИТОГО расход', '', '', '', '', (-Number(expenseTotal) / 100).toFixed(2).replace('.', ',')].join(';'));
+    lines.push(['Доход − Расход', '', '', '', '', ((Number(incomeTotal) - Number(expenseTotal)) / 100).toFixed(2).replace('.', ',')].join(';'));
+
+    const csv = lines.join('\n');
+    const filename = `finassist_${from}_${to}.csv`;
+    const caption = `Отчёт по операциям ${from} … ${to}\nСтрок: ${rows.length}. Открой в Excel/Numbers, чтобы сверить суммы.`;
+
+    const sent = await sendCsvToChat(user.telegramId, filename, csv, caption);
+    log.info(
+      { telegram_id: user.telegramId.toString(), handler: 'export', rows: rows.length, sent, latency_ms: Date.now() - start },
+      'analytics_export_done'
+    );
+    if (!sent) return { status: 200, body: { ok: false, error: 'Не удалось отправить файл в чат' } };
+    return { status: 200, body: { ok: true, rows: rows.length } };
+  } catch (err) {
+    if (err instanceof WebAppAuthError) return unauthorizedResponse(err.reason);
+    log.error({ err, handler: 'export', latency_ms: Date.now() - start }, 'analytics_export_error');
+    return { status: 200, body: { ok: false, error: 'Ошибка выгрузки' } };
+  }
+};

@@ -172,6 +172,10 @@ export const api = {
     return request('/api/tochka/sync', { method: 'POST', body: '{}' });
   },
 
+  exportReport(period: Period, filters?: Filters): Promise<{ ok: boolean; rows?: number; error?: string }> {
+    return request(`/api/analytics/export?${buildQuery(period, filters)}`);
+  },
+
   // ── Админка: управление пользователями (только owner) ────────────────────
 
   adminListUsers(): Promise<AdminListResponse> {
