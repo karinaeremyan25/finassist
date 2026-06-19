@@ -56,7 +56,7 @@ export function Transactions() {
           className="mt-3 flex min-h-[40px] w-full items-center justify-center gap-2 rounded-md bg-surface-2 px-3 text-[14px] font-medium text-ink active:opacity-90 disabled:opacity-60"
         >
           <Download size={16} strokeWidth={2} className={exporting ? 'animate-pulse' : ''} />
-          {exporting ? 'Готовлю файл…' : 'Выгрузить в CSV (придёт в чат)'}
+          {exporting ? 'Готовлю файл…' : 'Выгрузить в Excel (придёт в чат)'}
         </button>
         {exportMsg !== null ? (
           <p className="mt-1 text-center text-[12px] text-ink-muted">{exportMsg}</p>

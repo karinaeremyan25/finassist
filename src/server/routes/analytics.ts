@@ -7,6 +7,7 @@
  */
 
 import { z } from 'zod';
+import * as XLSX from 'xlsx';
 import { resolveWebAppUser, unauthorizedResponse, WebAppAuthError } from '../auth.js';
 import {
   getSummaryTotals,
@@ -413,24 +414,16 @@ const ExportQuerySchema = z.object({
   direction_id: z.string().uuid().optional(),
 });
 
-/** Экранирование значения для CSV (разделитель ;). */
-function csvCell(v: string | null | undefined): string {
-  const s = (v ?? '').replace(/\r?\n/g, ' ').trim();
-  return /[;"]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
-
-/** Сумма в рублях с запятой-десятичным и знаком (расход — минус). */
-function csvAmount(amountRubKopecks: bigint, flowType: string): string {
-  const rub = Number(amountRubKopecks) / 100;
-  const signed = flowType === 'expense' ? -rub : rub;
-  return signed.toFixed(2).replace('.', ',');
-}
-
-/** Отправка CSV-файла ботом в чат пользователя (Telegram sendDocument). */
-async function sendCsvToChat(chatId: bigint, filename: string, csv: string, caption: string): Promise<boolean> {
+/** Отправка файла ботом в чат пользователя (Telegram sendDocument). */
+async function sendDocumentToChat(
+  chatId: bigint,
+  filename: string,
+  buf: Buffer,
+  mime: string,
+  caption: string
+): Promise<boolean> {
   const token = config.BOT_TOKEN;
-  // BOM для корректной кириллицы в Excel
-  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+  const blob = new Blob([buf], { type: mime });
   const form = new FormData();
   form.append('chat_id', chatId.toString());
   form.append('caption', caption);
@@ -457,42 +450,58 @@ export const exportHandler: ApiHandler = async (req): Promise<ApiResponse> => {
       directionId: direction_id ?? null,
     });
 
-    // Сборка CSV
-    const header = ['Дата', 'Юрлицо', 'Направление', 'Категория', 'Тип', 'Сумма ₽', 'Контрагент', 'Описание', 'Источник'];
-    const lines: string[] = [header.join(';')];
-    let incomeTotal = 0n;
-    let expenseTotal = 0n;
+    // Сборка таблицы (массив строк). Сумма — ЧИСЛО (расход со знаком минус),
+    // чтобы Excel/Numbers воспринимали её как число и считали.
+    const aoa: (string | number)[][] = [
+      ['Дата', 'Юрлицо', 'Направление', 'Категория', 'Тип', 'Сумма, ₽', 'Контрагент', 'Описание', 'Источник'],
+    ];
+    let incomeTotal = 0;
+    let expenseTotal = 0;
     for (const r of rows) {
-      if (r.flowType === 'income') incomeTotal += r.amountRub;
-      else expenseTotal += r.amountRub;
+      const rub = Number(r.amountRub) / 100;
+      if (r.flowType === 'income') incomeTotal += rub;
+      else expenseTotal += rub;
       const category = r.isPersonal
         ? 'Личное'
         : r.flowType === 'income'
           ? (r.categoryName ?? 'Доход')
           : (r.pnlCategory ? (PNL_CATEGORY_LABELS[r.pnlCategory] ?? r.pnlCategory) : (r.categoryName ?? 'Прочее'));
-      lines.push([
-        csvCell(r.occurredAt.slice(0, 10)),
-        csvCell(r.entityName),
-        csvCell(r.directionName),
-        csvCell(category),
-        csvCell(r.flowType === 'income' ? 'доход' : 'расход'),
-        csvAmount(r.amountRub, r.flowType),
-        csvCell(r.counterparty),
-        csvCell(r.description),
-        csvCell(r.sourceCode),
-      ].join(';'));
+      aoa.push([
+        r.occurredAt.slice(0, 10),
+        r.entityName ?? '',
+        r.directionName ?? '',
+        category,
+        r.flowType === 'income' ? 'доход' : 'расход',
+        r.flowType === 'expense' ? -rub : rub,
+        r.counterparty ?? '',
+        r.description ?? '',
+        r.sourceCode ?? '',
+      ]);
     }
-    // Итоги
-    lines.push('');
-    lines.push(['ИТОГО доход', '', '', '', '', (Number(incomeTotal) / 100).toFixed(2).replace('.', ',')].join(';'));
-    lines.push(['ИТОГО расход', '', '', '', '', (-Number(expenseTotal) / 100).toFixed(2).replace('.', ',')].join(';'));
-    lines.push(['Доход − Расход', '', '', '', '', ((Number(incomeTotal) - Number(expenseTotal)) / 100).toFixed(2).replace('.', ',')].join(';'));
+    aoa.push([]);
+    aoa.push(['ИТОГО доход', '', '', '', '', incomeTotal]);
+    aoa.push(['ИТОГО расход', '', '', '', '', -expenseTotal]);
+    aoa.push(['Доход − Расход', '', '', '', '', incomeTotal - expenseTotal]);
 
-    const csv = lines.join('\n');
-    const filename = `finassist_${from}_${to}.csv`;
-    const caption = `Отчёт по операциям ${from} … ${to}\nСтрок: ${rows.length}. Открой в Excel/Numbers, чтобы сверить суммы.`;
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [
+      { wch: 11 }, { wch: 16 }, { wch: 20 }, { wch: 22 }, { wch: 8 },
+      { wch: 14 }, { wch: 32 }, { wch: 34 }, { wch: 12 },
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Операции');
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
 
-    const sent = await sendCsvToChat(user.telegramId, filename, csv, caption);
+    const filename = `finassist_${from}_${to}.xlsx`;
+    const caption = `Отчёт по операциям ${from} … ${to}\nСтрок: ${rows.length}. Открой в Excel/Numbers — суммы числами, можно сортировать и складывать.`;
+
+    const sent = await sendDocumentToChat(
+      user.telegramId,
+      filename,
+      buf,
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      caption
+    );
     log.info(
       { telegram_id: user.telegramId.toString(), handler: 'export', rows: rows.length, sent, latency_ms: Date.now() - start },
       'analytics_export_done'
