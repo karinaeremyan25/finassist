@@ -54,6 +54,12 @@ export function Donut({ summary }: { summary: AnalyticsSummary }) {
 
   const pct = (v: number): number => Math.round((v / total) * 100);
 
+  // Центр кольца: выбран ломтик → его %, название и сумма; иначе — прибыль (план).
+  const activeSeg = segments.find((s) => s.key === active) ?? null;
+  const centerPct = activeSeg ? pct(activeSeg.value) : marginPct;
+  const centerLabel = activeSeg ? activeSeg.label : 'Прибыль (план)';
+  const centerAmount = activeSeg ? rubles(activeSeg.value) : null;
+
   const ariaLabel =
     `Распределение выручки ${rubles(revenue)}. ` +
     segments.map((s) => `${s.label}: ${pct(s.value)}%`).join(', ') +
@@ -98,12 +104,15 @@ export function Donut({ summary }: { summary: AnalyticsSummary }) {
           </PieChart>
         </ResponsiveContainer>
 
-        {/* Центр кольца — margin % */}
-        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-          <b className="num text-[28px] font-bold leading-none text-ink">{marginPct}%</b>
-          <span className="mt-1 text-[11px] font-medium uppercase tracking-[0.04em] text-ink-muted">
-            Прибыль
+        {/* Центр кольца — выбранный фонд (% + название + сумма) либо прибыль (план) */}
+        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-6 text-center">
+          <b className="num text-[28px] font-bold leading-none text-ink">{centerPct}%</b>
+          <span className="mt-1 line-clamp-2 text-[11px] font-medium leading-[13px] text-ink-muted">
+            {centerLabel}
           </span>
+          {centerAmount ? (
+            <span className="num mt-0.5 text-[11px] font-semibold text-ink">{centerAmount}</span>
+          ) : null}
         </div>
       </div>
 
