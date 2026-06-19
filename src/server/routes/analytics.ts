@@ -484,10 +484,31 @@ export const exportHandler: ApiHandler = async (req): Promise<ApiResponse> => {
     aoa.push(['Доход − Расход', '', '', '', '', incomeTotal - expenseTotal]);
 
     const ws = XLSX.utils.aoa_to_sheet(aoa);
+    // Ширины колонок с запасом, чтобы суммы не липли к соседнему столбцу.
     ws['!cols'] = [
-      { wch: 11 }, { wch: 16 }, { wch: 20 }, { wch: 22 }, { wch: 8 },
-      { wch: 14 }, { wch: 32 }, { wch: 34 }, { wch: 12 },
+      { wch: 12 }, // Дата
+      { wch: 18 }, // Юрлицо
+      { wch: 22 }, // Направление
+      { wch: 24 }, // Категория
+      { wch: 9 },  // Тип
+      { wch: 18 }, // Сумма
+      { wch: 38 }, // Контрагент
+      { wch: 44 }, // Описание
+      { wch: 12 }, // Источник
     ];
+    // Числовой формат для столбца «Сумма» (F): 4 795,00 с разделением разрядов.
+    const amountCol = 5;
+    const range = XLSX.utils.decode_range(ws['!ref'] ?? 'A1');
+    for (let r = 1; r <= range.e.r; r++) {
+      const addr = XLSX.utils.encode_cell({ c: amountCol, r });
+      const cell = ws[addr];
+      if (cell && typeof cell.v === 'number') {
+        cell.t = 'n';
+        cell.z = '#,##0.00;[Red]-#,##0.00';
+      }
+    }
+    // Автофильтр по шапке (только по строкам данных, без итогов).
+    ws['!autofilter'] = { ref: `A1:I${rows.length + 1}` };
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Операции');
     const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
