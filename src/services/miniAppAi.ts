@@ -152,7 +152,7 @@ async function buildDataContext(
   const weekly = await getWeeklyRevenue(dateFrom, dateTo);
   // Заголовочные доход/расход — с учётом выбранного юрлица (entity-aware).
   const scopedTotals = await getSummaryTotals({ dateFrom, dateTo, entityId, directionId: null });
-  const topExpenses = await getTopExpenseCategories(dateFrom, dateTo, 5);
+  const topExpenses = await getTopExpenseCategories(dateFrom, dateTo, 8, entityId);
   const categoryExpenses = await getCategoryExpenses(dateFrom, dateTo);
   const fundBalances = await getAllFundBalances();
   // overview опционален: он завязан на коды юрлиц/налоговую логику, которые могут

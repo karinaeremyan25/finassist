@@ -367,45 +367,68 @@ export async function getDailyRevenueExpenseHistory(
   }));
 }
 
+/** Человекочитаемые названия pnl_category для разбивки расходов. */
+const PNL_CATEGORY_LABELS: Record<string, string> = {
+  payroll: 'ФОТ (зарплаты)',
+  marketing: 'Реклама и маркетинг',
+  subscriptions: 'Подписки и сервисы',
+  tax: 'Налоги',
+  loan: 'Кредиты и займы',
+  payment_commission: 'Комиссии платёжных систем',
+  other_business: 'Прочие бизнес-расходы',
+};
+
+/**
+ * Топ категорий БИЗНЕС-расходов за период по РЕАЛЬНОЙ классификации (pnl_category),
+ * а не по category_id (где у синка всё «Прочие расходы»). Личные траты исключены.
+ * entityId — опциональный фильтр по юрлицу (для наставника/дашборда «по ИП»).
+ */
 export async function getTopExpenseCategories(
   dateFrom: string,
   dateTo: string,
-  limit: number
+  limit: number,
+  entityId?: string | null
 ): Promise<ExpenseCategorySummary[]> {
-  const rows = await sql<
-    { category_id: string; display_name: string; amount: bigint }[]
-  >`
+  const entityFilter =
+    entityId !== null && entityId !== undefined ? sql`AND t.entity_id = ${entityId}` : sql``;
+
+  const rows = await sql<{ cat: string | null; amount: bigint }[]>`
     SELECT
-      c.id AS category_id,
-      c.display_name,
+      t.pnl_category AS cat,
       COALESCE(SUM(t.amount_rub), 0)::bigint AS amount
     FROM transactions t
-    LEFT JOIN categories c ON c.id = t.category_id
     WHERE t.deleted_at IS NULL
       AND t.flow_type = 'expense'
+      AND (t.is_personal = false OR t.is_personal IS NULL)
       AND t.occurred_at >= ${dateFrom}
       AND t.occurred_at <= ${dateTo}
-    GROUP BY c.id, c.display_name
+      ${entityFilter}
+    GROUP BY t.pnl_category
     ORDER BY amount DESC
     LIMIT ${limit}
   `;
 
   const totalRows = await sql<{ total: bigint }[]>`
     SELECT COALESCE(SUM(amount_rub), 0)::bigint AS total
-    FROM transactions
+    FROM transactions t
     WHERE deleted_at IS NULL
       AND flow_type = 'expense'
+      AND (is_personal = false OR is_personal IS NULL)
       AND occurred_at >= ${dateFrom}
       AND occurred_at <= ${dateTo}
+      ${entityFilter}
   `;
   const totalAmount = totalRows[0]?.total ?? 0n;
 
-  return rows.map((row) => ({
-    categoryId: row.category_id,
-    displayName: row.display_name,
-    amountKopecks: row.amount,
-    percentage: totalAmount === 0n ? 0 : Number((row.amount * 10000n) / totalAmount) / 100,
-  }));
+  return rows.map((row) => {
+    const code = row.cat ?? 'other_business';
+    return {
+      categoryId: code,
+      displayName: PNL_CATEGORY_LABELS[code] ?? 'Прочие бизнес-расходы',
+      amountKopecks: row.amount,
+      percentage: totalAmount === 0n ? 0 : Number((row.amount * 10000n) / totalAmount) / 100,
+    };
+  });
 }
 
 // ── Mini App summary query ─────────────────────────────────────────────────

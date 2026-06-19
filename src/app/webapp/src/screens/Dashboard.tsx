@@ -136,9 +136,13 @@ export function Dashboard() {
       {/* Donut */}
       <section className="mt-6 px-4">
         <SectionHeader
-          title="Распределение"
+          title="Распределение выручки (план)"
           right={<span className="num">{formatMonthLabel(period.from)}</span>}
         />
+        <p className="-mt-1 mb-2 text-[12px] leading-[16px] text-ink-faint">
+          Как доход распределяется по фондам по твоей системе (план). Это не фактическая
+          прибыль — её и маржу смотри в разделе P&amp;L.
+        </p>
         {summary.status === 'loading' ? (
           <div className="flex flex-col items-center gap-4 py-4">
             <Skeleton className="h-[176px] w-[176px] rounded-full" />

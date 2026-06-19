@@ -153,7 +153,7 @@ export const summaryHandler: ApiHandler = async (req) => {
     const profitAmount = revenue > allocated ? revenue - allocated : 0n;
     const profitPercent =
       revenue > 0n ? Math.round((Number(profitAmount) / Number(revenue)) * 1000) / 10 : 0;
-    distribution.push({ label: 'Прибыль', amount: profitAmount, percent: profitPercent, kind: 'profit' });
+    distribution.push({ label: 'Прибыль (план)', amount: profitAmount, percent: profitPercent, kind: 'profit' });
 
     // Деньги на ИП — сумма счетов с префиксом 40802 (ИП-счета Точки),
     // на ООО — счета с префиксом 40702. Префикс надёжнее, чем funds.entity_id.
