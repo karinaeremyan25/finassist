@@ -43,6 +43,13 @@ const DIRECTION_DPO_ID = 'b17eb69e-4bd3-441f-8a0c-57734d56840c';
 /** UUID направления Метанойя (доходы ООО). */
 const DIRECTION_METANOIA_ID = 'ac773f21-0f0d-4772-8baf-15cac941c122';
 
+/**
+ * Доп-счёт ИП = карта Натальи Скрипниковой (её зарплата). Все ТРАТЫ с этой
+ * карты учитываем как ФОТ (зарплата Наташи), без жёлтого флага. Сам счёт скрыт
+ * из «Денег на ИП». Сравниваем по номеру счёта (без БИК).
+ */
+const NATASHA_CARD_ACCOUNT = '40802810420000644796';
+
 /** ООО — счёт с префиксом 40702; иначе ИП. Возвращает entity+direction для дохода. */
 function entityForAccount(accountId: string): { entityId: string; incomeDirectionId: string } {
   const num = accountId.split('/')[0] ?? '';
@@ -439,6 +446,17 @@ async function insertTransaction(
     needsReview = true;
   }
 
+  // Траты с карты Наташи (доп-счёт ИП) → ФОТ (зарплата Наташи), без жёлтого.
+  let counterpartyOut = who;
+  let descOut = desc;
+  if (!isCredit && accountId.split('/')[0] === NATASHA_CARD_ACCOUNT) {
+    pnlCategory = 'payroll';
+    needsClassification = false;
+    needsReview = false;
+    counterpartyOut = 'Наташа Скрипникова (ЗП)';
+    descOut = ('Наташа Скрипникова (ЗП)' + (desc ? ' · ' + desc : '')).slice(0, 300);
+  }
+
   // Резолвим category_id по коду (ПОСЛЕДОВАТЕЛЬНО)
   const catRows = await sql<{ id: string }[]>`
     SELECT id FROM categories WHERE code = ${catCode} LIMIT 1
@@ -466,8 +484,8 @@ async function insertTransaction(
       ${categoryId},
       ${sourceId},
       ${occTs},
-      ${desc || null},
-      ${who || null},
+      ${descOut || null},
+      ${counterpartyOut || null},
       ${pnlCategory},
       ${externalId},
       ${createdBy},
