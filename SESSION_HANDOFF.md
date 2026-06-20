@@ -1,108 +1,78 @@
-# Session Handoff — FinAssist Mini App
+# FinAssist — SESSION HANDOFF
 
-> **Дата фиксации:** 2026-06-10
-> **Статус:** спецификации + ДИЗАЙН Mini App завершены, разработка НЕ начата
-> **Следующий шаг:** разработка фронтенда `src/app/webapp/` по дизайн-сборке
+_Обновлено: 2026-06-20. Этот файл — точка входа для продолжения работы. Прочитай его целиком перед началом._
 
----
-
-## Дизайн готов (2026-06-10)
-
-Дизайн-сборка экрана Dashboard завершена. Тема — тёмно-морская (deep ocean / petrol teal), бренд **«Психология Здоровья»** (НЕ «Aksari»). Стиль Dark OLED, шрифт Inter (tabular-nums).
-
-**Артефакты:**
-| Файл | Что это |
-|------|---------|
-| [mini-app-design.md](mini-app-design.md) | Полная дизайн-сборка: палитра (CSS-токены + Tailwind), типографика, spacing, компоненты, макет Dashboard, спека donut, состояния, чек-лист |
-| [mini-app-preview.html](mini-app-preview.html) | Живой self-contained прототип Dashboard (SVG-донат, без библиотек, открывается в браузере) |
-| `aksari_finance.png` | Исходный референс-лейаут (пипетка взята отсюда) |
-
-**Палитра** снята пипеткой с референса: фон `#0B2926→#0F3B33`, гребень `#1F584A`, поверхности `#143733/#1A473E`, акцент-бирюза `#2DD4BF`. Полные токены — в `mini-app-design.md` §2.
-
-**Donut на главном (math-clean part-to-whole):** целое = Выручка (100%), 5 непересекающихся долей по убыванию: Расходы `#FB7A6E` / Прибыль `#34D399` / Фонд «Кредиты» `#FBBF24` / Налоги `#94A3B8` / Фонд «Благодарность» `#38BDF8`. Центр кольца = доля Прибыли (margin %). Прибыль = `Выручка − Расходы − Налоги − Фонды` (остаток, в БД не хранится). Бэкенд должен отдавать кастомные фонды в `fundStatus.gratitudeFund` / `creditFund`. Детали и формула — `mini-app-design.md` §6.
-
-**Дизайн-скиллы** установлены в `~/.claude/skills/` (ui-ux-pro-max, design, design-system, ui-styling, brand) из github.com/nextlevelbuilder/ui-ux-pro-max-skill. Можно переиспользовать при разработке компонентов.
-
-**Старт сессии разработки:** «Разрабатываем фронтенд Mini App FinAssist. Дизайн — в mini-app-design.md, прототип — mini-app-preview.html. Стек React + Vite + Tailwind. Начнём со скелета src/app/webapp/ и экрана Dashboard.»
+Также есть память ассистента: `~/.claude/projects/.../memory/MEMORY.md` (ooo-connection, lava-integration, prodamus-accounting, fot-payroll, ai-model-split).
 
 ---
 
----
+## 0. Что это
+Финансовая аналитика для Карины Еремян: Telegram Mini App + бот + авто-синк банка Точка + AI-наставник.
+- **2 юрлица:** ИП Карина Еремян (УСН 6%, `8355ee9e-11ed-4e73-8bcd-2dc0ff3c8068`) и ООО ДПО «Ассургина» (УСН 15%, `ce729bf9-649c-41c5-bbfd-ed0fb785c45d`).
+- **2 направления:** Курс ДПО «Психология здоровья» (`b17eb69e-4bd3-441f-8a0c-57734d56840c`) и Клуб «Метанойя» (`ac773f21-0f0d-4772-8baf-15cac941c122`).
+- Прод: **https://finassist-virid.vercel.app** , репо **github.com/karinaeremyan25/finassist** (ветка main, авто-деплой при push).
 
-## Где мы остановились
+## 1. Архитектура (важные правила)
+- Весь API — **один catch-all** `api/router.ts` (rewrite `/api/(.*)→/api/router`). Новые эндпоинты только в `src/server/index.ts → buildRouter()`. НЕ плодить файлы в `/api`.
+- БД Supabase, postgres.js. В serverless — **строго последовательные** запросы (`await` по одному; `Promise.all` вешает pgBouncer). `max:5, prepare:false`.
+- Деньги — **BIGINT копейки**, только через `utils/money.ts`. Никаких float/parseFloat.
+- Юрлицо счёта Точки — **по префиксу номера: 40802=ИП, 40702=ООО** (надёжнее, чем entity_id).
+- ⚠️ **Операции (transactions) НЕ хранят свой банковский счёт** — счёт определяется только через выписку Точки по этому счёту.
+- Vercel-управление через **API-токен** (у Карины в vercel.com → Tokens; в репо НЕ хранить; при необходимости попросить заново). Через него ставлю env-переменные и делаю redeploy по `https://api.vercel.com` (project id `prj_J3KbLVGain3NHyv3WwgBnn3xlX7F`).
+- Авто-синк Точки — **GitHub Actions cron 2×/день** (09:00 и 19:00 МСК), дёргает `/api/tochka/sync?key=sha256(BOT_TOKEN)`.
+- AI: наставник — Opus 4.8, классификатор — Sonnet 4.6 (модель только через config). Температуру не передавать.
 
-Прописывание спеки Mini App завершено на уровне трёх документов. Сегодня навели порядок: развели **платформенный слой** и **спеку AI-агента** по разным файлам (раньше инфраструктура была ошибочно в спеке агента).
+## 2. Интеграции — статус
+- **Точка (ИП+ООО):** один JWT-ключ на оба юрлица; `TOCHKA_JWT_TOKEN` в Vercel обновлён. Авто-синк работает: 9 счетов, остатки фондов, операции, классификация расходов. Курсы валют ЦБ обновляются в начале синка (`fetchAndStoreFxRates`). ⚠️ Схема `fx_rates` в БД = (currency, rate BIGINT ×10000, date) — `cbr.ts` приведён к ней (раньше валютная конвертация молча падала).
+- **Lava.top:** вебхук `POST /api/webhooks/lava` ЖИВОЙ. `LAVA_WEBHOOK_SECRET` в Vercel; URL+секрет настроены в ЛК Lava. OFFER_MAP заполнен 9 offer_id (курсы ДПО→ООО, остальное→ИП). Авторизация: секрет в любом заголовке ИЛИ HMAC `signature`. ⚠️ На ПЕРВОЙ реальной оплате сверить реальный payload/подпись (проверено только симуляцией). Вывод денег требует верификацию аккаунта Lava (Карина проходит: документы загружены → ждёт модерацию + 3 продажи + проверку дохода до 7 дней).
+- **Продамус:** вебхук `POST /api/webhooks/prodamus` ЖИВОЙ. `PRODAMUS_SECRET_KEY` в Vercel; URL добавлен в ЛК Продамус (Настройки формы → ⚙ Настройки → URL уведомлений). Маршрут по продукту: курс «Психология здоровья»→ООО/prodamus_course, клуб→ИП/prodamus_club. `tochkaSync` **пропускает банковские зачисления от Продамуса** (доход берётся по продаже, иначе двойной счёт). ⚠️ Подпись `computeProdamusSignature` — PHP-совместимая, на ПЕРВОЙ реальной оплате сверить (ЛК Продамус → история отправки: 200=ок, 400=подпись не сошлась).
+- **Робокасса:** вебхук есть в коде, не активирован.
 
-### Карта документов
+## 3. Учётные правила (бизнес-логика)
+- **Доход Продамуса** — по продажам, не по банковским зачислениям. Курс ДПО→ООО, клуб/сопровождение/консультации→ИП.
+- **Доход Lava** — курсы ДПО→ООО, остальное→ИП.
+- **ФОТ (payroll):** Сунчелеева Анастасия (по имени, `PAYROLL_PAYEES` в transactionClassifier.ts) + траты карты Наташи Скрипниковой (доп-счёт ИП `40802810420000644796`, `NATASHA_CARD_ACCOUNT` в tochkaSync.ts). Доп-счёт Наташи **скрыт** (фонд ip_acc2 soft-deleted).
+- **Займы (Фреш Кредит)** сейчас считаются доходом; бухгалтер их в доход НЕ берёт. РЕШЕНИЕ НЕ ФИНАЛИЗИРОВАНО.
+- Внутренние переводы между своими счетами не считаются доходом/расходом (isOwn).
+- Разбивка расходов везде — по **pnl_category** (ФОТ/Реклама/Налоги/Подписки/Прочее), НЕ по category_id.
 
-| Файл | Что описывает | Уровень |
-|------|---------------|---------|
-| [mini-app.architector.md](mini-app.architector.md) | Архитектура + **источники данных/синхронизация** (Robokassa/Prodamus/Tochka, cron) + **безопасность** + edge cases | Платформа |
-| [feature-spec-mini-app-ai-agent.md](feature-spec-mini-app-ai-agent.md) | Дашборд, KPI, графики, инсайты, session-авторизация | Фича: аналитика |
-| [ai-agent-spec.md](ai-agent-spec.md) | AI-наставник (инлайн-чат), `/api/ai-chat` — только сам чат, ссылается на платформу | Фича: AI-агент |
+## 4. Фонды/счета (вкладка «Фонды»)
+Юрлица фондов починены по префиксу. Порядок ООО→ИП, на каждой карточке номер счёта (···NNNN), подытоги по юрлицу. Соответствие код → счёт → имя:
+- `rs_ooo` 40702…238882 «Расчётный счёт ООО» (ООО)
+- `ooo_acc2` 40702…293475 «Фонд «Налоги ООО»» (ООО) — ⚠️ подтвердить название
+- `rs_ip` 40802…394172 «Расчётный счёт ИП Еремян» (ИП)
+- `gratitude` 40802…928601 «Фонд «Благодарность»» (ИП)
+- `credit` 40802…641779 «Фонд «Кредиты»» (ИП)
+- `reserve_ip` 40802…641398 «Фонд «Резерв»» (ИП)
+- `land` 40802…641355 «Фонд «Земля»» (ИП)
+- `tax_ip` 40802…639769 «Фонд «Налог»» (ИП)
+- `ip_acc2` 40802…644796 = карта Наташи, **скрыт**
+- Итоги (2026-06-20): ООО ≈ 887 683 ₽, ИП ≈ 492 836 ₽ (без карты Наташи).
 
-**Принцип разделения (зафиксирован):** AI-агент *читает* данные; платформа их *синхронизирует и хранит*. Синхронизация существовала бы и без агента → она в общей спеке.
+## 5. Сверка с бухгалтером (июнь 2026)
+- Расход combined ≈ сходится с ~1.51М (после подключения ООО).
+- Доход ИП: наш клуб ≈ 487к нетто vs бухгалтер 845 868 — расхождение из-за базиса (касса/грязными, майский хвост Продамуса, займы). Товарная разбивка ДПО→ООО уже верная.
+- ⚠️ **Перекос:** доход ДПО ушёл на ООО, а расходы (зарплаты/реклама/прочее) остались на ИП → ИП в «минусе» по P&L. Нужно правило разнесения РАСХОДОВ по юрлицам от бухгалтера.
 
----
+## 6. Возможности приложения
+Дашборд (Деньги на ИП/ООО, KPI, план/факт, диаграмма распределения=ПЛАН не факт + клик по фонду показывает его %, инсайты), Отчёты (список+фильтры, расходы красным с минусом, **выгрузка в Excel .xlsx** ботом в чат — `/api/analytics/export`, с разрядами и автофильтром), P&L (ИП/ООО/Сводный/Год + блок «Прибыль по юрлицам»), Фонды, AI-наставник, Админка. Продажи клиентам — платёжные ссылки Lava/Продамус.
 
-## Что по факту в коде (обновлено 2026-06-10, разработка стартовала)
+## 7. ОТКРЫТЫЕ ВОПРОСЫ / TODO (продолжить отсюда)
+1. **Фонды:** что такое «р/с ИП коммунизм» (нет такого счёта)? Подтвердить «Фонд Налоги ООО»=···3475. Решить, показывать ли карту Наташи.
+2. **Ежедневный отчёт-аналитика** ботом (остатки по счетам ООО→ИП + итоги + доход/расход за день) — НЕ сделан. Спросить: время (напр. 9:00 МСК) и формат (текст/Excel).
+3. **Займы (Фреш Кредит):** доход или нет? Решить; при «нет» — исключить из дохода.
+4. **Разнесение расходов по юрлицам** — правило от бухгалтера (ДПО-расходы → ООО?).
+5. **Первые реальные оплаты Lava и Продамус** — сверить подписи/формат (§2).
+6. **Точная сверка дохода ИП** — взять у бухгалтера подневную 845 868 и сопоставить.
+7. (ранее) P&L Excel по категориям; импорт US-карты; подключить карты для полного схождения расхода; улучшить классификацию payroll.
 
-- ✅ `src/services/miniApp.ts` — backend-сервис финансовой сводки.
-- ✅ **`src/server/`** — HTTP-API Mini App на `node:http` (без фреймворка): `http.ts` (роутер, CORS, лимит тела 256KB, bigint→number), `auth.ts` (верификация Telegram initData HMAC-SHA256 + проверка `app_users`, обновление `last_seen`), `routes/{session,analytics,users,aiChat}.ts`. Порт `WEBAPP_PORT` (8080), запускается рядом с ботом в `src/index.ts`.
-- ✅ Эндпоинты: `POST /api/webapp/session`, `GET /api/analytics/{summary,charts,insights,transactions}`, `GET /api/webapp/users`, `POST /api/ai-chat` (+alias `/api/webapp/ai/chat`), `GET /api/health`. `summary.fundStatus` отдаёт `taxFund,reserveFund,gratitudeFund,creditFund,profitFund` (копейки) — donut сходится.
-- ✅ **`src/services/miniAppAi.ts`** — AI-наставник на `claude-opus-4-8` (`config.AI_MENTOR_MODEL`, temp 0.4). `callClaude` обратносовместимо расширен опциональными `model`/`temperature`.
-- ✅ **`src/app/webapp/`** — фронтенд Mini App (изолированный Vite+React+TS+Tailwind пакет, свой `package.json`/`node_modules`). Экраны: Dashboard (с donut по §6), Transactions, Users, Settings, Chat (AIChatWidget). Состояния Loading/Empty/Error/Partial. `npm run build` — чисто.
-- ✅ Миграции `004_add_last_seen.sql`, `005_sync_audit.sql` (таблица `sync_runs` + `sources.sync_enabled`).
-- ✅ **`src/services/integrations/`** (по РЕАЛЬНЫМ API, research официальной документации):
-  - **Tochka** (`tochka.ts`) — pull: OAuth `client_credentials` → `enter.tochka.com/connect/token`, Open Banking statement flow (init → poll → Ready), cron `*/30`.
-  - **Robokassa** (`robokassa.ts`) — push: webhook `POST /api/webhooks/robokassa`, проверка подписи `MD5(OutSum:InvId:Пароль#2[:Shp_*])`, ответ `OK{InvId}`.
-  - **Prodamus** (`prodamus.ts`) — push: webhook `POST /api/webhooks/prodamus`, подпись `HMAC-SHA256` (заголовок `Sign`, PHP-совместимая сериализация).
-  - Проверки подписи покрыты smoke-тестом (MD5 + HMAC). ⚠️ Остаточные `ASSUMPTION` (имена полей выписки Точки, точность сериализации Prodamus) — сверить на ПЕРВОМ реальном платеже (см. `feature-spec-integrations-sync.md`).
-- ✅ **`src/bot/handlers/miniApp.ts`** — `/app` + web_app-кнопка; `setChatMenuButton`; кнопка в `/start`.
-- ✅ **`src/server/static.ts`** — раздача `webapp/dist` (path traversal проверен тестом), SPA-fallback.
-- ✅ **Миграции 004/005 ПРИМЕНЕНЫ на реальной БД** (`npm run migrate` — раннер с трекингом `schema_migrations` + baseline-детект). Проверено: `sync_runs`, `sources.sync_enabled`, `app_users.last_seen`, `moddatetime` в `extensions`.
-- ✅ **Деплой-автоматизация** (`deploy/`): `nginx.conf`, `deploy.sh`, `setup-server.sh`, `README.md`; `ecosystem.config.js` (PM2 `--env-file`).
-- ✅ **`SETUP.md`** + `npm run preflight` (`scripts/check-env.mjs`) — чек-лист «под ключ» для оставшихся ручных шагов.
-- ⏳ Осталось РУКАМИ (нужны секреты/доступы — см. [SETUP.md](SETUP.md)): заполнить `.env` (WEBAPP_URL + ключи платёжек), зарегистрировать Menu Button у @BotFather, развернуть на VPS (`deploy/README.md`), прописать webhook-URL в кабинетах Robokassa/Prodamus, сверить подписи на первом платеже.
+## 8. Полезные скрипты (/scripts, запуск: `node scripts/<имя>.mjs`, читают .env)
+- `accounts_audit.mjs` — все счета + живые остатки Точки.
+- `ip_income_audit.mjs`, `audit_profit_fot.mjs` — аудит дохода/прибыли/ФОТ.
+- `prodamus_split.mjs` / `import_prodamus_june.mjs` — разбор/импорт выгрузки Продамуса (Downloads/paylist (062026).csv).
+- `natasha_card_fot.mjs` — траты карты Наташи → ФОТ.
+- `funds_fix.mjs` — починка юрлиц/названий фондов.
+- `test_lava.mjs` — E2E-тест вебхука Lava.
 
-### Сборка / проверки
-- `npx tsc --noEmit` (корень) — **0 ошибок** (webapp исключён из корневого `tsconfig`, у него свой).
-- `npm run build` — собирает `dist/` (бэкенд). `cd src/app/webapp && npm run build` — собирает фронтенд.
-- ⚠️ `npm run lint`: tsc-половина проходит; **eslint-половина падала и ДО этой сессии** — в проекте нет `.eslintrc`/`eslint.config.*`. Нужно добавить конфиг ESLint (отдельная задача, не блокер сборки).
-
-### Бэклог задач (спеки готовы)
-| Файл | Задача | Статус |
-|------|--------|--------|
-| [feature-spec-integrations-sync.md](feature-spec-integrations-sync.md) | Синхронизация Robokassa/Prodamus/Tochka + cron + audit | ✅ Реализовано (сверить ASSUMPTION-эндпоинты + credentials) |
-| [feature-spec-bot-miniapp-launch.md](feature-spec-bot-miniapp-launch.md) | Кнопка запуска Mini App из бота (`/app`, web_app) | ✅ Реализовано (нужен `WEBAPP_URL` + регистрация у @BotFather) |
-| [feature-spec-webapp-serving-deploy.md](feature-spec-webapp-serving-deploy.md) | Раздача `webapp/dist` (Вариант B — node:http) | ✅ Реализовано; ⏳ HTTPS/nginx/PM2 деплой на VPS |
-| [tech-debt-backlog.md](tech-debt-backlog.md) | Мелочи QA: LRU promptCache, entity-изоляция наставника, ESLint-конфиг, code-splitting, healthcheck, source_type | ⏳ Low-priority |
-
-### Git
-Работа ведётся в git-репозитории, ветка `feat/platform-layer` (5 коммитов-чекпойнтов). `.gitignore` исключает `.env`, `*.csv` (финансовые выгрузки), `node_modules`, `dist`. Влить в `main` после деплой-проверки.
-
----
-
-## Открытые вопросы (РЕШЕНЫ 2026-06-10)
-
-1. ✅ **Модель синхронизирована.** AI-наставник Mini App → **Claude Opus 4.8** (`claude-opus-4-8`), грузится из `config.AI_MENTOR_MODEL`. Классификатор транзакций остаётся на `claude-sonnet-4-6` (`config.CLAUDE_MODEL`) — детерминированный разбор. Опус — для качественного диалога наставника. Обновлено в `ai-agent-spec.md` и `mini-app.architector.md`.
-2. ✅ **Стек фронтенда подтверждён:** React + Vite + Tailwind. Дизайн готов (`mini-app-design.md`).
-3. ✅ **Дизайн готов** (блок «Дизайн готов» выше).
-4. ✅ **Donut / кастомные фонды:** `/api/analytics/summary` → `fundStatus` расширен полями `gratitudeFund` и `creditFund` (копейки). `taxFund`/`reserveFund` — из балансов фондов; `gratitudeFund`/`creditFund` — из транзакций за период (`getGratitudeFundMetrics` / `getLoanExpenseMetrics`). Обновлено в обеих API-спеках.
-
----
-
-## Точка входа для следующей сессии: РАЗРАБОТКА
-
-> Дизайн готов (см. блок выше). Ниже — карта экранов для реализации.
-
-Экраны Mini App (дизайн Dashboard готов, остальные — по тем же токенам):
-- **Dashboard** `/dashboard` — KPI, графики, карточки инсайтов
-- **Transactions** `/transactions` — таблица транзакций с фильтрами
-- **Users** `/users` — пользователи и доступ
-- **Settings** `/settings` — выбор юрлица, направления, периода
-- **AI-наставник** — инлайн-чат (виджет `AIChatWidget`)
-
-Состояния каждого экрана: Loading (skeleton) / Empty / Error / Ready.
-
-**Старт новой сессии:** «Разрабатываем фронтенд Mini App FinAssist. Дизайн — в mini-app-design.md, прототип — mini-app-preview.html, контекст — в SESSION_HANDOFF.md. Стек React + Vite + Tailwind. Начнём со скелета src/app/webapp/ и экрана Dashboard.»
+## 9. Гайдлайны
+Действовать автономно, меньше «зайди-нажми». Деньги/налоги — не угадывать, при неоднозначности уточнять. Все суммы — копейки. После изменений: typecheck (`npx tsc --noEmit -p tsconfig.json` + webapp), build, commit (осмысленно), push (Vercel задеплоит). Секреты — не в репо. Путь проекта (кириллица): `/Users/karinaeremyan/Desktop/ИИ Архитектура/Разработка платформы финансовой аналитики/FinAssist`.
