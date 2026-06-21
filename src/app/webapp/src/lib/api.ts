@@ -210,6 +210,11 @@ export const api = {
     return request<EmployeesAnalyticsResponse>('/api/employees/analytics');
   },
 
+  /** Выгрузка ФОТ в Excel — бот пришлёт файл в чат. */
+  exportEmployees(): Promise<{ ok: boolean; rows?: number; error?: string }> {
+    return request('/api/employees/export');
+  },
+
   createEmployee(body: {
     company_id: Company;
     full_name: string;
@@ -284,6 +289,7 @@ export const api = {
     from?: string | null;
     to?: string | null;
     context?: string | null;
+    history?: string | null;
   }): Promise<AiAssistantResponse> {
     return request<AiAssistantResponse>('/api/ai/assistant', {
       method: 'POST',

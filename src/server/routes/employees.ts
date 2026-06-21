@@ -12,6 +12,7 @@
  */
 
 import { z } from 'zod';
+import * as XLSX from 'xlsx';
 import { resolveWebAppUser, unauthorizedResponse, WebAppAuthError } from '../auth.js';
 import {
   listEmployees,
@@ -21,6 +22,7 @@ import {
   createEmployee,
   updateEmployee,
 } from '../../db/repositories/employees.js';
+import { sendDocumentToChat } from '../../services/telegramDoc.js';
 import { toKopecks } from '../../utils/money.js';
 import { childLogger } from '../../utils/logger.js';
 import type { ApiHandler, ApiResponse } from '../http.js';
@@ -89,6 +91,65 @@ export const employeesListHandler: ApiHandler = async (req): Promise<ApiResponse
     if (err instanceof WebAppAuthError) return unauthorizedResponse(err.reason);
     log.error({ err, handler: 'employees_list', latency_ms: Date.now() - start }, 'employees_list_error');
     return { status: 200, body: { period: currentMonthMsk(), data: [] } };
+  }
+};
+
+// ── GET /api/employees/export — выгрузка ФОТ в Excel (ботом в чат) ──────────
+
+export const employeesExportHandler: ApiHandler = async (req): Promise<ApiResponse> => {
+  const start = Date.now();
+  try {
+    const user = await resolveWebAppUser(req);
+    const period = currentMonthMsk();
+    const employees = await listEmployees(period, null, null);
+
+    const num = (k: bigint | null): number | string => (k === null ? '' : Number(k) / 100);
+    const aoa: (string | number)[][] = [
+      ['ФИО', 'Должность', 'Юрлицо', 'Способ оплаты', 'Оклад/мес ₽', 'Выплачено тек. месяц ₽', 'Выплачено пред. месяц ₽', 'Остаток ₽', 'Статус'],
+    ];
+    for (const e of employees) {
+      aoa.push([
+        e.fullName,
+        e.position ?? '',
+        e.companyId.toUpperCase(),
+        '', // способ оплаты хранится в bank_details — не в listEmployees; оставляем пустым
+        num(e.salaryMonthly),
+        num(e.paidCurrent),
+        num(e.paidPrev),
+        num(e.balance),
+        e.status,
+      ]);
+    }
+    const totalSalary = employees.reduce((s, e) => s + (e.salaryMonthly ?? 0n), 0n);
+    const totalPaid = employees.reduce((s, e) => s + e.paidCurrent, 0n);
+    aoa.push([]);
+    aoa.push(['ИТОГО', '', '', '', Number(totalSalary) / 100, Number(totalPaid) / 100]);
+
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [{ wch: 26 }, { wch: 28 }, { wch: 8 }, { wch: 20 }, { wch: 14 }, { wch: 18 }, { wch: 18 }, { wch: 14 }, { wch: 12 }];
+    const range = XLSX.utils.decode_range(ws['!ref'] ?? 'A1');
+    for (let r = 1; r <= range.e.r; r++) {
+      for (const c of [4, 5, 6, 7]) {
+        const cell = ws[XLSX.utils.encode_cell({ c, r })];
+        if (cell && typeof cell.v === 'number') { cell.t = 'n'; cell.z = '#,##0.00'; }
+      }
+    }
+    ws['!autofilter'] = { ref: `A1:I${employees.length + 1}` };
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'ФОТ');
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+
+    const sent = await sendDocumentToChat(
+      user.telegramId, `fot_${period}.xlsx`, buf,
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      `Выгрузка ФОТ за ${period}. Сотрудников: ${employees.length}.`
+    );
+    log.info({ telegram_id: user.telegramId.toString(), handler: 'employees_export', sent, latency_ms: Date.now() - start }, 'employees_export_done');
+    return { status: 200, body: { ok: sent, rows: employees.length } };
+  } catch (err) {
+    if (err instanceof WebAppAuthError) return unauthorizedResponse(err.reason);
+    log.error({ err, handler: 'employees_export', latency_ms: Date.now() - start }, 'employees_export_error');
+    return { status: 200, body: { ok: false, error: 'Ошибка выгрузки' } };
   }
 };
 

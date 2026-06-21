@@ -72,11 +72,38 @@ export function Employees() {
   const company = filter === 'all' ? undefined : filter;
   const list = useAsync(() => api.employees(company, 'active'), [filter]);
 
+  const [exporting, setExporting] = useState(false);
+  const [exportMsg, setExportMsg] = useState<string | null>(null);
+  async function exportXlsx() {
+    setExporting(true);
+    setExportMsg(null);
+    try {
+      const r = await api.exportEmployees();
+      setExportMsg(r.ok ? 'Файл отправлен в чат с ботом' : r.error ?? 'Не удалось выгрузить');
+    } catch {
+      setExportMsg('Ошибка выгрузки');
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return (
     <>
       <SubHeader title="ФОТ" />
       <section className="px-4 pt-3">
-        <p className="mb-4 text-[13px] text-ink-muted">Зарплаты, выплаты и остатки по сотрудникам.</p>
+        <p className="mb-3 text-[13px] text-ink-muted">Зарплаты, выплаты и остатки по сотрудникам.</p>
+        <button
+          type="button"
+          disabled={exporting}
+          onClick={() => {
+            hapticSelection();
+            void exportXlsx();
+          }}
+          className="mb-4 inline-flex min-h-[40px] items-center gap-1.5 rounded-pill border border-border-strong bg-surface-2 px-4 text-[13px] font-medium text-ink active:bg-surface-3 disabled:opacity-60"
+        >
+          {exporting ? 'Выгружаю…' : 'Выгрузить в Excel'}
+        </button>
+        {exportMsg ? <p className="mb-3 -mt-2 text-[12px] text-ink-muted">{exportMsg}</p> : null}
 
         <div className="mb-4 flex gap-1 rounded-pill bg-surface-1 p-1">
           {FILTERS.map((f) => {

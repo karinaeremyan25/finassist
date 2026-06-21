@@ -152,6 +152,12 @@ export function Chat() {
       addChatMessage({ role: 'error', text: ERROR_HINTS['invalid_request']! });
       return;
     }
+    // История диалога (последние 6 сообщений) — чтобы follow-up «формируй»/«исправь»
+    // понимались по контексту.
+    const history = chatMessages
+      .slice(-6)
+      .map((m) => `${m.role === 'user' ? 'Пользователь' : 'AI'}: ${m.text}`)
+      .join('\n');
     setInput('');
     setPending(null);
     addChatMessage({ role: 'user', text: question });
@@ -163,6 +169,7 @@ export function Chat() {
         from: period.from,
         to: period.to,
         context: 'dashboard',
+        history: history || null,
       });
       if (res.kind === 'action') {
         setPending(res);

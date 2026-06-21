@@ -291,6 +291,31 @@ export async function deriveContractorsFromTransactions(company: Company | null)
   return created;
 }
 
+/**
+ * Ищет получателя платежа по имени среди контрагентов (есть ИНН) и сотрудников.
+ * Для AI-платёжки: достаёт name + inn из базы. Возвращает null, если не найден.
+ */
+export async function findPayeeByName(
+  name: string
+): Promise<{ name: string; inn: string | null; kind: 'contractor' | 'employee' } | null> {
+  const like = `%${name.trim()}%`;
+  const c = await sql<{ name: string; inn: string | null }[]>`
+    SELECT name, inn FROM contractors
+    WHERE name ILIKE ${like} AND status = 'active'
+    ORDER BY char_length(name) LIMIT 1
+  `;
+  if (c[0]) return { name: c[0].name, inn: c[0].inn, kind: 'contractor' };
+
+  const e = await sql<{ full_name: string }[]>`
+    SELECT full_name FROM employees
+    WHERE full_name ILIKE ${like} AND status = 'active'
+    ORDER BY char_length(full_name) LIMIT 1
+  `;
+  if (e[0]) return { name: e[0].full_name, inn: null, kind: 'employee' };
+
+  return null;
+}
+
 /** Находит контрагента ООО по точному/похожему имени (для AI-оркестратора). */
 export async function findContractorByName(
   name: string,

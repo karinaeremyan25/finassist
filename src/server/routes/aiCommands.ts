@@ -18,8 +18,10 @@ import { config } from '../../config.js';
 import { resolveWebAppUser, unauthorizedResponse, WebAppAuthError } from '../auth.js';
 import { callClaude } from '../../services/claude.js';
 import { logCommand, getCommand, finalizeCommand } from '../../db/repositories/aiCommands.js';
-import { findContractorByName, createContractor } from '../../db/repositories/contractors.js';
+import { findContractorByName, createContractor, findPayeeByName } from '../../db/repositories/contractors.js';
 import { createInvoice } from '../../db/repositories/invoices.js';
+import { generatePaymentOrderPdf } from '../../services/paymentOrder.js';
+import { sendDocumentToChat } from '../../services/telegramDoc.js';
 import { upsertRule } from '../../db/repositories/categoryRules.js';
 import { getPnlForPeriod, ENTITY_IDS, VALID_PNL_CATEGORIES } from '../../db/repositories/pnl.js';
 import { generateMentorAnswer, MentorError } from '../../services/miniAppAi.js';
@@ -50,6 +52,7 @@ const ParsedIntentSchema = z.object({
   description: z.string().nullish(),
   to_category: z.string().nullish(),
   keyword: z.string().nullish(),
+  is_tax: z.boolean().default(false),
   answer: z.string().nullish(),
   preview: z.string(),
   needs_clarification: z.boolean().default(false),
@@ -57,26 +60,32 @@ const ParsedIntentSchema = z.object({
 type ParsedIntent = z.infer<typeof ParsedIntentSchema>;
 
 const SYSTEM_PROMPT = `Ты — оркестратор финансовых команд для платформы FinAssist (ИП Карина Еремян + ООО «Ассургина»).
-Пользователь присылает короткую команду (голос/текст). Определи намерение и верни СТРОГО валидный JSON.
+Пользователь присылает короткую команду (голос/текст). Может прийти ИСТОРИЯ предыдущих сообщений — используй её как контекст (например «формируй» относится к ранее обсуждённой платёжке). Определи намерение и верни СТРОГО валидный JSON.
 
 Типы намерений (type):
 - create_invoice — выставить счёт контрагенту (только ООО). Поля: contractor_name, amount_rub, description.
-- create_payment — платёжное поручение/налог (например «платёжка в ФНС на налог»). Поля: description.
+- create_payment — платёжное поручение: оплата контрагенту/сотруднику/сервису ИЛИ налог.
+    Поля: contractor_name (кому платим — ФИО/название; для налога не нужно), amount_rub (сумма), description (назначение платежа), is_tax (true если это налог/ФНС/ЕНП).
+    Примеры: «сформируй платёжку для Петровой на 30000 за бухуслуги» → contractor_name="Петрова", amount_rub=30000, description="бухгалтерские услуги", is_tax=false.
+    «платёжка в ФНС на налог» → is_tax=true.
 - reclassify — переместить операции в другую категорию расходов. Поля: to_category (одно из: payroll, marketing, loan, subscriptions, tax, payment_commission, other_business), keyword (по какому признаку: имя/назначение, например «коммунизм»).
-- query — вопрос об аналитике/состоянии. Поле answer НЕ заполняй (на него ответит отдельный шаг).
+- query — вопрос об аналитике/состоянии. Поле answer НЕ заполняй.
 - unknown — не удалось понять.
 
 Суммы: amount_rub — число в РУБЛЯХ (не копейки). «25K»/«25к» = 25000. «1.5 млн» = 1500000.
-needs_clarification=true, если не хватает обязательного поля (например счёт без суммы или без контрагента) — edge case #4.
-preview — короткая фраза-подтверждение на русском («Создам счёт на Гайнетдинова, 25 000 ₽»).
+needs_clarification=true, если не хватает обязательного поля. Для create_payment (не налог) обязательны contractor_name и amount_rub — если чего-то нет, needs_clarification=true и в preview спроси недостающее («На какую сумму платёжка для Петровой?»).
+preview — короткая фраза-подтверждение/уточнение на русском.
 
 Верни ТОЛЬКО JSON-объект:
-{"type":"...","contractor_name":null,"amount_rub":null,"description":null,"to_category":null,"keyword":null,"preview":"...","needs_clarification":false}`;
+{"type":"...","contractor_name":null,"amount_rub":null,"description":null,"to_category":null,"keyword":null,"is_tax":false,"preview":"...","needs_clarification":false}`;
 
-async function parseIntent(commandText: string): Promise<ParsedIntent> {
+async function parseIntent(commandText: string, history?: string): Promise<ParsedIntent> {
+  const userContent = history
+    ? `Контекст предыдущих сообщений:\n${history}\n\nНовая команда:\n<user_input>${commandText}</user_input>`
+    : `<user_input>${commandText}</user_input>`;
   const raw = await callClaude({
     system: SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: `<user_input>${commandText}</user_input>` }],
+    messages: [{ role: 'user', content: userContent }],
     expectJson: true,
     maxTokens: 1024,
     // Классификация «вопрос vs действие» — простая задача, держим на Sonnet
@@ -158,6 +167,9 @@ const AssistantBodySchema = z.object({
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
   to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
   context: z.string().nullish(),
+  // История диалога (последние сообщения «роль: текст»), чтобы follow-up вроде
+  // «формируй» / «исправь сумму» понимались по контексту.
+  history: z.string().max(6000).nullish(),
 });
 
 export const aiAssistantHandler: ApiHandler = async (req): Promise<ApiResponse> => {
@@ -166,12 +178,12 @@ export const aiAssistantHandler: ApiHandler = async (req): Promise<ApiResponse> 
     const user = await resolveWebAppUser(req);
     const parsed = AssistantBodySchema.safeParse(req.body);
     if (!parsed.success) return invalidRequest('Поле question обязательно');
-    const { question, entity_id, from, to, context } = parsed.data;
+    const { question, entity_id, from, to, context, history } = parsed.data;
 
-    // 1. Пытаемся понять, это действие или вопрос.
+    // 1. Пытаемся понять, это действие или вопрос (с учётом истории диалога).
     let intent: ParsedIntent | null = null;
     try {
-      intent = await parseIntent(question);
+      intent = await parseIntent(question, history ?? undefined);
     } catch {
       intent = null; // не распарсилось — уходим в наставника
     }
@@ -212,7 +224,7 @@ export const aiAssistantHandler: ApiHandler = async (req): Promise<ApiResponse> 
         entityId: entity_id ?? null,
         from: from ?? null,
         to: to ?? null,
-        context: context ?? null,
+        context: history ? `${context ?? ''}\nИстория диалога:\n${history}`.trim() : context ?? null,
       });
       log.info(
         { telegram_id: user.telegramId.toString(), handler: 'ai_assistant', kind: 'answer', latency_ms: Date.now() - start },
@@ -439,7 +451,7 @@ export const aiCommandApproveHandler: ApiHandler = async (req): Promise<ApiRespo
       return invalidRequest('Невалидный разбор команды');
     }
 
-    const result = await executeIntent(intent.data, user.id);
+    const result = await executeIntent(intent.data, user.id, user.telegramId);
 
     await finalizeCommand(cmd.id, result.ok ? 'executed' : 'failed', result.payload);
 
@@ -463,7 +475,19 @@ interface ExecResult {
   payload: Record<string, unknown>;
 }
 
-async function executeIntent(intent: ParsedIntent, userId: string): Promise<ExecResult> {
+/** Сегодняшняя дата в МСК как DD.MM.YYYY и компактный номер документа. */
+function todayMskParts(): { date: string; number: string } {
+  const now = new Date();
+  const msk = new Date(now.getTime() + 3 * 60 * 60 * 1000);
+  const dd = String(msk.getUTCDate()).padStart(2, '0');
+  const mm = String(msk.getUTCMonth() + 1).padStart(2, '0');
+  const yyyy = msk.getUTCFullYear();
+  const hh = String(msk.getUTCHours()).padStart(2, '0');
+  const mi = String(msk.getUTCMinutes()).padStart(2, '0');
+  return { date: `${dd}.${mm}.${yyyy}`, number: `${yyyy}${mm}${dd}-${hh}${mi}` };
+}
+
+async function executeIntent(intent: ParsedIntent, userId: string, telegramId: bigint): Promise<ExecResult> {
   if (intent.type === 'create_invoice') {
     if (!intent.contractor_name || intent.amount_rub == null) {
       return { ok: false, payload: { note: 'Не хватает контрагента или суммы' } };
@@ -504,22 +528,78 @@ async function executeIntent(intent: ParsedIntent, userId: string): Promise<Exec
   }
 
   if (intent.type === 'create_payment') {
-    // Считаем налог ИП по нетто (real income − комиссии) × 8% за текущий месяц.
-    const period = currentMonthMsk();
-    const pnl = await getPnlForPeriod(period, [ENTITY_IDS.ip]);
-    const base = pnl.incomeTotal - pnl.expensesBreakdown.payment_commission;
-    const taxBase = base < 0n ? 0n : base;
-    const tax = BigInt(Math.round(Number(taxBase) * 0.08));
+    const { date, number } = todayMskParts();
+
+    // (А) НАЛОГ: считаем по нетто и формируем платёжку на ЕНП/ФНС.
+    if (intent.is_tax) {
+      const period = currentMonthMsk();
+      const pnl = await getPnlForPeriod(period, [ENTITY_IDS.ip]);
+      const base = pnl.incomeTotal - pnl.expensesBreakdown.payment_commission;
+      const taxBase = base < 0n ? 0n : base;
+      const tax = BigInt(Math.round(Number(taxBase) * 0.08));
+
+      const pdf = await generatePaymentOrderPdf({
+        number, date,
+        payerName: 'ИП Карина Еремян',
+        payerInn: null,
+        payeeName: 'Казначейство России (ФНС России) — ЕНП',
+        payeeInn: null,
+        payeeAccount: null,
+        payeeBic: null,
+        amountKopecks: tax,
+        purpose: `Налог Авто-УСН за ${period} (доход ${rubles(pnl.incomeTotal)} − комиссии ${rubles(pnl.expensesBreakdown.payment_commission)}) × 8%`,
+      });
+      const sent = await sendDocumentToChat(
+        telegramId, `nalog_${period}.pdf`, pdf, 'application/pdf',
+        `Платёжка по налогу (черновик): ${rubles(tax)}. Проверьте реквизиты ЕНП перед оплатой.`
+      );
+      return {
+        ok: true,
+        payload: {
+          period,
+          tax_amount_formatted: rubles(tax),
+          pdf_sent: sent,
+          note: sent
+            ? 'PDF платёжки по налогу отправлен в чат (черновик, нетто × 8%). Реквизиты ЕНП/ИНН проверьте перед оплатой.'
+            : 'Налог посчитан, но не удалось отправить PDF в чат.',
+        },
+      };
+    }
+
+    // (Б) ОПЛАТА ПОЛУЧАТЕЛЮ: достаём реквизиты из базы, формируем платёжку.
+    if (!intent.contractor_name || intent.amount_rub == null) {
+      return { ok: false, payload: { note: 'Не хватает получателя или суммы платёжки' } };
+    }
+    const amount = toKopecks(intent.amount_rub);
+    const payee = await findPayeeByName(intent.contractor_name);
+    const payeeName = payee?.name ?? intent.contractor_name;
+
+    const pdf = await generatePaymentOrderPdf({
+      number, date,
+      payerName: 'ИП Карина Еремян',
+      payerInn: null,
+      payeeName,
+      payeeInn: payee?.inn ?? null,
+      payeeAccount: null,
+      payeeBic: null,
+      amountKopecks: amount,
+      purpose: intent.description ?? 'Оплата',
+    });
+    const sent = await sendDocumentToChat(
+      telegramId, `platezhka_${number}.pdf`, pdf, 'application/pdf',
+      `Платёжка (черновик) для «${payeeName}» на ${rubles(amount)}. Проверьте реквизиты получателя.`
+    );
     return {
       ok: true,
       payload: {
-        period,
-        income: Number(pnl.incomeTotal),
-        commissions: Number(pnl.expensesBreakdown.payment_commission),
-        tax_base: Number(taxBase),
-        tax_amount: Number(tax),
-        tax_amount_formatted: rubles(tax),
-        note: 'Расчёт налога (Авто-УСН, нетто × 8%). PDF платёжного поручения сформирую после подтверждения реквизитов (ИНН ИП + реквизиты ЕНП) — они нужны, чтобы платёжка была корректной.',
+        payee: payeeName,
+        found_in_base: payee !== null,
+        amount: Number(amount),
+        amount_formatted: rubles(amount),
+        pdf_sent: sent,
+        note: sent
+          ? `PDF платёжки отправлен в чат.${payee ? ' Реквизиты получателя взяты из базы.' : ' Получателя нет в базе — заполните р/с и ИНН.'} Расчётный счёт/БИК добавьте перед оплатой.`
+          : 'Не удалось отправить PDF в чат.',
       },
     };
   }
