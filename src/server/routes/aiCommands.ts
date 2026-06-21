@@ -78,7 +78,10 @@ async function parseIntent(commandText: string): Promise<ParsedIntent> {
     messages: [{ role: 'user', content: `<user_input>${commandText}</user_input>` }],
     expectJson: true,
     maxTokens: 1024,
-    model: config.AI_MENTOR_MODEL,
+    // Классификация «вопрос vs действие» — простая задача, держим на Sonnet
+    // (config.CLAUDE_MODEL), чтобы не делать лишний Opus-вызов перед ответом
+    // наставника. Сам совет/диалог наставника остаётся на Opus.
+    model: config.CLAUDE_MODEL,
   });
   return ParsedIntentSchema.parse(raw);
 }
