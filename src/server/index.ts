@@ -20,8 +20,12 @@ import {
   pnlHandler,
   pnlYearHandler,
   personalSpendingHandler,
+  pnlInTransitHandler,
   updateTxCategoryHandler,
 } from './routes/pnl.js';
+import { employeesHandler, employeeTransactionsHandler } from './routes/employees.js';
+import { contractorsHandler, invoiceGenerateHandler } from './routes/contractors.js';
+import { aiCommandsHandler, aiCommandApproveHandler } from './routes/aiCommands.js';
 
 export function buildRouter(): Router {
   const router = new Router();
@@ -81,8 +85,26 @@ export function buildRouter(): Router {
   router.get('/api/analytics/pnl/year', pnlYearHandler);
   router.get('/api/analytics/pnl', pnlHandler);
   router.get('/api/analytics/personal-spending', personalSpendingHandler);
+  // Деньги в пути (US-104): доход/расход с выделением pending + налог по нетто
+  router.get('/api/analytics/pnl/in-transit', pnlInTransitHandler);
   // PATCH без :param — id передаётся в теле запроса (Router делает exact match)
   router.add('PATCH', '/api/analytics/transactions/category', updateTxCategoryHandler);
+
+  // ── ФОТ (US-101) ──────────────────────────────────────────────────────────
+  // Exact-match роутер: id сотрудника передаётся в query (?id=) / теле.
+  router.add('GET',   '/api/employees', employeesHandler);
+  router.add('POST',  '/api/employees', employeesHandler);
+  router.add('PATCH', '/api/employees', employeesHandler);
+  router.get('/api/employees/transactions', employeeTransactionsHandler);
+
+  // ── Контрагенты и счета (US-102) ──────────────────────────────────────────
+  router.add('GET',  '/api/contractors', contractorsHandler);
+  router.add('POST', '/api/contractors', contractorsHandler);
+  router.post('/api/invoices/generate', invoiceGenerateHandler);
+
+  // ── AI-оркестратор (US-105) ───────────────────────────────────────────────
+  router.post('/api/ai/commands', aiCommandsHandler);
+  router.post('/api/ai/commands/approve', aiCommandApproveHandler);
 
   return router;
 }

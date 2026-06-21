@@ -243,6 +243,55 @@ export async function getPnlForPeriod(
   };
 }
 
+// ── getInTransitTotals (US-104: деньги в пути) ────────────────────────────
+
+export interface InTransitTotals {
+  income: { total: bigint; inTransit: bigint; real: bigint };
+  expenses: { total: bigint; inTransit: bigint; real: bigint };
+}
+
+/**
+ * Доход/расход за месяц с выделением «в пути» (tx_status='pending').
+ *   total     = все операции (любой статус)
+ *   inTransit = только tx_status='pending'
+ *   real      = total − inTransit (фактически проведённые, completed)
+ * Налог по нетто считается отдельно в route. Займы исключаются из дохода.
+ */
+export async function getInTransitTotals(
+  period: string,
+  entityIds: string[] | null
+): Promise<InTransitTotals> {
+  const { dateFrom, dateTo } = monthBoundaries(period);
+  const entityFilter = entityIds !== null ? sql`AND t.entity_id = ANY(${entityIds})` : sql``;
+
+  const rows = await sql<{ flow_type: 'income' | 'expense'; total: bigint; in_transit: bigint }[]>`
+    SELECT
+      t.flow_type,
+      COALESCE(SUM(t.amount_rub), 0)::bigint AS total,
+      COALESCE(SUM(t.amount_rub) FILTER (WHERE t.tx_status = 'pending'), 0)::bigint AS in_transit
+    FROM transactions t
+    WHERE t.deleted_at IS NULL
+      AND t.tx_status <> 'returned'
+      AND (t.flow_type = 'expense' OR t.pnl_category IS DISTINCT FROM 'loan')
+      AND t.occurred_at >= ${dateFrom}
+      AND t.occurred_at < ${dateTo}
+      ${entityFilter}
+    GROUP BY t.flow_type
+  `;
+
+  const inc = rows.find((r) => r.flow_type === 'income');
+  const exp = rows.find((r) => r.flow_type === 'expense');
+  const incomeTotal = inc?.total ?? 0n;
+  const incomeTransit = inc?.in_transit ?? 0n;
+  const expenseTotal = exp?.total ?? 0n;
+  const expenseTransit = exp?.in_transit ?? 0n;
+
+  return {
+    income: { total: incomeTotal, inTransit: incomeTransit, real: incomeTotal - incomeTransit },
+    expenses: { total: expenseTotal, inTransit: expenseTransit, real: expenseTotal - expenseTransit },
+  };
+}
+
 // ── getYearPnl ────────────────────────────────────────────────────────────
 
 export interface MonthPnlRow {

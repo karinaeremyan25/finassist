@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { config } from '../config.js';
 import { callClaude } from './claude.js';
+import { listRules, matchRule } from '../db/repositories/categoryRules.js';
 import { childLogger } from '../utils/logger.js';
 
 /**
@@ -247,9 +248,35 @@ export async function classifyTransactions(txs: TxToClassify[]): Promise<TxClass
   const income = txs.filter((tx) => tx.flowType === 'income');
   const expenses = txs.filter((tx) => tx.flowType === 'expense');
 
-  const expenseResults: TxClassification[] = [];
-  for (let i = 0; i < expenses.length; i += BATCH_SIZE) {
-    const batch = expenses.slice(i, i + BATCH_SIZE);
+  // US-103 «AI учится»: сперва применяем выученные правила (детерминированно),
+  // эти операции не отправляем в Claude. company неизвестна на уровне выписки —
+  // matchRule сопоставляет глобальные и любые правила по подстроке.
+  let rules: Awaited<ReturnType<typeof listRules>> = [];
+  try {
+    rules = await listRules();
+  } catch (err) {
+    log.warn({ error: err instanceof Error ? err.message : String(err) }, 'category_rules_load_failed');
+  }
+
+  const ruleResults: TxClassification[] = [];
+  const needClaude: TxToClassify[] = [];
+  for (const tx of expenses) {
+    const rule = rules.length > 0 ? matchRule(rules, tx.counterparty, tx.description, null) : null;
+    if (rule !== null) {
+      ruleResults.push({
+        id: tx.id,
+        pnlCategory: rule.targetPnlCategory,
+        confidence: rule.confidence,
+        isPersonal: rule.targetPnlCategory.startsWith('personal_'),
+      });
+    } else {
+      needClaude.push(tx);
+    }
+  }
+
+  const expenseResults: TxClassification[] = [...ruleResults];
+  for (let i = 0; i < needClaude.length; i += BATCH_SIZE) {
+    const batch = needClaude.slice(i, i + BATCH_SIZE);
     const batchResults = await classifyBatch(batch);
     expenseResults.push(...batchResults);
   }

@@ -20,10 +20,12 @@ import {
   getPnlForPeriod,
   getYearPnl,
   getPersonalSpending,
+  getInTransitTotals,
   updateTxCategory,
   prevMonth,
   monthBoundaries,
 } from '../../db/repositories/pnl.js';
+import { getTxRuleContext, deriveKeyword, upsertRule } from '../../db/repositories/categoryRules.js';
 import { childLogger } from '../../utils/logger.js';
 import type { ApiHandler, ApiResponse } from '../http.js';
 
@@ -361,6 +363,22 @@ export const updateTxCategoryHandler: ApiHandler = async (req): Promise<ApiRespo
       };
     }
 
+    // US-103 «AI учится»: выучиваем правило keyword→category, чтобы похожие
+    // операции классифицировались автоматически. Не блокируем ответ при сбое.
+    let ruleCreated = false;
+    try {
+      const ctx = await getTxRuleContext(id);
+      if (ctx !== null) {
+        const keyword = deriveKeyword(ctx.counterparty, ctx.description);
+        if (keyword !== null) {
+          await upsertRule(keyword, category, ctx.company, user.id);
+          ruleCreated = true;
+        }
+      }
+    } catch (ruleErr) {
+      log.warn({ err: ruleErr, handler: 'update_tx_category' }, 'rule_learn_failed');
+    }
+
     log.info(
       {
         telegram_id: user.telegramId.toString(),
@@ -379,6 +397,7 @@ export const updateTxCategoryHandler: ApiHandler = async (req): Promise<ApiRespo
         category: result.pnl_category,
         needs_review: result.needs_review,
         category_overridden_at: result.category_overridden_at,
+        rule_created: ruleCreated,
       },
     };
   } catch (err) {
@@ -388,6 +407,59 @@ export const updateTxCategoryHandler: ApiHandler = async (req): Promise<ApiRespo
       'update_tx_category_error'
     );
     throw err;
+  }
+};
+
+// ── GET /api/analytics/pnl/in-transit (US-104: деньги в пути) ──────────────
+
+export const pnlInTransitHandler: ApiHandler = async (req): Promise<ApiResponse> => {
+  const start = Date.now();
+  try {
+    const user = await resolveWebAppUser(req);
+
+    const parsed = PnlQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return invalidRequest(parsed.error.errors[0]?.message ?? 'Параметры entity и period обязательны');
+    }
+    const { entity, period } = parsed.data;
+    const entityIds = resolveEntityIds(entity);
+
+    const t = await getInTransitTotals(period, entityIds);
+
+    // Налог считается по НЕТТО (real income без денег в пути), минус комиссии.
+    const pnl = await getPnlForPeriod(period, entityIds);
+    const taxBaseRaw = t.income.real - pnl.expensesBreakdown.payment_commission;
+    const taxBase = taxBaseRaw < 0n ? 0n : taxBaseRaw;
+    const tax = BigInt(Math.round(Number(taxBase) * 0.08));
+
+    log.info(
+      { telegram_id: user.telegramId.toString(), handler: 'pnl_in_transit', entity, period, latency_ms: Date.now() - start },
+      'pnl_in_transit_ok'
+    );
+
+    return {
+      status: 200,
+      body: {
+        entity,
+        period,
+        income: { total: t.income.total, in_transit: t.income.inTransit, real_income: t.income.real },
+        expenses: { total: t.expenses.total, in_transit: t.expenses.inTransit, real_expenses: t.expenses.real },
+        tax_net: tax,
+      },
+    };
+  } catch (err) {
+    if (err instanceof WebAppAuthError) return unauthorizedResponse(err.reason);
+    log.error({ err, handler: 'pnl_in_transit', latency_ms: Date.now() - start }, 'pnl_in_transit_error');
+    return {
+      status: 200,
+      body: {
+        entity: req.query['entity'] ?? 'total',
+        period: req.query['period'] ?? '',
+        income: { total: 0, in_transit: 0, real_income: 0 },
+        expenses: { total: 0, in_transit: 0, real_expenses: 0 },
+        tax_net: 0,
+      },
+    };
   }
 };
 

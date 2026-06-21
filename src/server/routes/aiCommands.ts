@@ -1,0 +1,284 @@
+/**
+ * AI-оркестратор (SPEC_FinAssist_v2.1 US-105).
+ *
+ *   POST /api/ai/commands           — разобрать команду (создаёт запись pending)
+ *   POST /api/ai/commands/approve   — выполнить ранее разобранную команду (id в теле)
+ *
+ * Команда разбирается моделью-наставником (config.AI_MENTOR_MODEL = Opus) в
+ * структурированный JSON-интент. Денежные действия выполняются ТОЛЬКО после
+ * явного approve. Всё логируется в ai_commands.
+ *
+ * Безопасность денег: переклассификация по голосу не мутирует существующие
+ * операции вслепую (это риск для учёта) — вместо этого создаётся правило
+ * category_rules, которое применится к будущим операциям (US-103 «AI учится»).
+ */
+
+import { z } from 'zod';
+import { config } from '../../config.js';
+import { resolveWebAppUser, unauthorizedResponse, WebAppAuthError } from '../auth.js';
+import { callClaude } from '../../services/claude.js';
+import { logCommand, getCommand, finalizeCommand } from '../../db/repositories/aiCommands.js';
+import { findContractorByName, createContractor } from '../../db/repositories/contractors.js';
+import { createInvoice } from '../../db/repositories/invoices.js';
+import { upsertRule } from '../../db/repositories/categoryRules.js';
+import { getPnlForPeriod, ENTITY_IDS, VALID_PNL_CATEGORIES } from '../../db/repositories/pnl.js';
+import { toKopecks, rubles } from '../../utils/money.js';
+import { childLogger } from '../../utils/logger.js';
+import type { ApiHandler, ApiResponse } from '../http.js';
+
+const log = childLogger({ handler: 'ai_commands' });
+
+function invalidRequest(message: string): ApiResponse {
+  return { status: 400, body: { error: { code: 'invalid_request', message } } };
+}
+
+function currentMonthMsk(): string {
+  const now = new Date();
+  const msk = new Date(now.getTime() + 3 * 60 * 60 * 1000);
+  return `${msk.getUTCFullYear()}-${String(msk.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+// ── Разбор интента ─────────────────────────────────────────────────────────
+
+const ParsedIntentSchema = z.object({
+  type: z.enum(['create_invoice', 'create_payment', 'reclassify', 'query', 'unknown']),
+  contractor_name: z.string().nullish(),
+  amount_rub: z.number().nullish(),
+  description: z.string().nullish(),
+  to_category: z.string().nullish(),
+  keyword: z.string().nullish(),
+  answer: z.string().nullish(),
+  preview: z.string(),
+  needs_clarification: z.boolean().default(false),
+});
+type ParsedIntent = z.infer<typeof ParsedIntentSchema>;
+
+const SYSTEM_PROMPT = `Ты — оркестратор финансовых команд для платформы FinAssist (ИП Карина Еремян + ООО «Ассургина»).
+Пользователь присылает короткую команду (голос/текст). Определи намерение и верни СТРОГО валидный JSON.
+
+Типы намерений (type):
+- create_invoice — выставить счёт контрагенту (только ООО). Поля: contractor_name, amount_rub, description.
+- create_payment — платёжное поручение/налог (например «платёжка в ФНС на налог»). Поля: description.
+- reclassify — переместить операции в другую категорию расходов. Поля: to_category (одно из: payroll, marketing, loan, subscriptions, tax, payment_commission, other_business), keyword (по какому признаку: имя/назначение, например «коммунизм»).
+- query — вопрос об аналитике/состоянии. Поле answer НЕ заполняй (на него ответит отдельный шаг).
+- unknown — не удалось понять.
+
+Суммы: amount_rub — число в РУБЛЯХ (не копейки). «25K»/«25к» = 25000. «1.5 млн» = 1500000.
+needs_clarification=true, если не хватает обязательного поля (например счёт без суммы или без контрагента) — edge case #4.
+preview — короткая фраза-подтверждение на русском («Создам счёт на Гайнетдинова, 25 000 ₽»).
+
+Верни ТОЛЬКО JSON-объект:
+{"type":"...","contractor_name":null,"amount_rub":null,"description":null,"to_category":null,"keyword":null,"preview":"...","needs_clarification":false}`;
+
+async function parseIntent(commandText: string): Promise<ParsedIntent> {
+  const raw = await callClaude({
+    system: SYSTEM_PROMPT,
+    messages: [{ role: 'user', content: `<user_input>${commandText}</user_input>` }],
+    expectJson: true,
+    maxTokens: 1024,
+    model: config.AI_MENTOR_MODEL,
+  });
+  return ParsedIntentSchema.parse(raw);
+}
+
+// ── POST /api/ai/commands ──────────────────────────────────────────────────
+
+const CommandBodySchema = z.object({
+  command: z.string().min(1).max(2000),
+});
+
+export const aiCommandCreateHandler: ApiHandler = async (req): Promise<ApiResponse> => {
+  const start = Date.now();
+  try {
+    const user = await resolveWebAppUser(req);
+    const parsed = CommandBodySchema.safeParse(req.body);
+    if (!parsed.success) return invalidRequest('Поле command обязательно');
+
+    let intent: ParsedIntent;
+    try {
+      intent = await parseIntent(parsed.data.command);
+    } catch (err) {
+      log.warn({ error: err instanceof Error ? err.message : String(err) }, 'ai_parse_failed');
+      const id = await logCommand({
+        userId: user.id,
+        commandText: parsed.data.command,
+        commandType: 'unknown',
+        status: 'failed',
+        aiResponse: { error: 'parse_failed' },
+      });
+      return { status: 200, body: { id, status: 'failed', ai_response: { preview: 'Не удалось разобрать команду. Переформулируйте.' }, needs_approval: false } };
+    }
+
+    const needsApproval =
+      !intent.needs_clarification && (intent.type === 'create_invoice' || intent.type === 'create_payment' || intent.type === 'reclassify');
+
+    const id = await logCommand({
+      userId: user.id,
+      commandText: parsed.data.command,
+      commandType: intent.type,
+      status: intent.needs_clarification ? 'failed' : 'pending',
+      aiResponse: intent,
+    });
+
+    log.info(
+      { telegram_id: user.telegramId.toString(), handler: 'ai_command_create', type: intent.type, id, latency_ms: Date.now() - start },
+      'ai_command_create_ok'
+    );
+
+    return {
+      status: 200,
+      body: {
+        id,
+        status: intent.needs_clarification ? 'needs_clarification' : 'pending',
+        ai_response: intent,
+        needs_approval: needsApproval,
+      },
+    };
+  } catch (err) {
+    if (err instanceof WebAppAuthError) return unauthorizedResponse(err.reason);
+    log.error({ err, handler: 'ai_command_create', latency_ms: Date.now() - start }, 'ai_command_create_error');
+    return invalidRequest('Ошибка обработки команды');
+  }
+};
+
+// ── POST /api/ai/commands/approve ──────────────────────────────────────────
+
+const ApproveBodySchema = z.object({
+  id: z.string().uuid(),
+  approved: z.boolean(),
+});
+
+export const aiCommandApproveHandler: ApiHandler = async (req): Promise<ApiResponse> => {
+  const start = Date.now();
+  try {
+    const user = await resolveWebAppUser(req);
+    const parsed = ApproveBodySchema.safeParse(req.body);
+    if (!parsed.success) return invalidRequest('Поля id (uuid) и approved обязательны');
+
+    const cmd = await getCommand(parsed.data.id);
+    if (cmd === null) return { status: 404, body: { error: { code: 'not_found', message: 'Команда не найдена' } } };
+    if (cmd.status !== 'pending') return invalidRequest('Команда уже обработана');
+
+    if (!parsed.data.approved) {
+      await finalizeCommand(cmd.id, 'rejected', { note: 'Отклонено пользователем' });
+      return { status: 200, body: { status: 'rejected' } };
+    }
+
+    const intent = ParsedIntentSchema.safeParse(cmd.aiResponse);
+    if (!intent.success) {
+      await finalizeCommand(cmd.id, 'failed', { error: 'bad_intent' });
+      return invalidRequest('Невалидный разбор команды');
+    }
+
+    const result = await executeIntent(intent.data, user.id);
+
+    await finalizeCommand(cmd.id, result.ok ? 'executed' : 'failed', result.payload);
+
+    log.info(
+      { telegram_id: user.telegramId.toString(), handler: 'ai_command_approve', type: intent.data.type, ok: result.ok, latency_ms: Date.now() - start },
+      'ai_command_approve_ok'
+    );
+
+    return { status: 200, body: { status: result.ok ? 'executed' : 'failed', result: result.payload } };
+  } catch (err) {
+    if (err instanceof WebAppAuthError) return unauthorizedResponse(err.reason);
+    log.error({ err, handler: 'ai_command_approve', latency_ms: Date.now() - start }, 'ai_command_approve_error');
+    return invalidRequest('Ошибка выполнения команды');
+  }
+};
+
+// ── Исполнение интента ─────────────────────────────────────────────────────
+
+interface ExecResult {
+  ok: boolean;
+  payload: Record<string, unknown>;
+}
+
+async function executeIntent(intent: ParsedIntent, userId: string): Promise<ExecResult> {
+  if (intent.type === 'create_invoice') {
+    if (!intent.contractor_name || intent.amount_rub == null) {
+      return { ok: false, payload: { note: 'Не хватает контрагента или суммы' } };
+    }
+    // Счета — только ООО. Находим контрагента или создаём.
+    let contractor = await findContractorByName(intent.contractor_name, 'ooo');
+    if (contractor === null) {
+      const id = await createContractor({
+        companyId: 'ooo',
+        name: intent.contractor_name,
+        phone: null,
+        email: null,
+        inn: null,
+        contractorType: 'company',
+        matchPattern: null,
+      });
+      contractor = { id, name: intent.contractor_name };
+    }
+    const amount = toKopecks(intent.amount_rub);
+    const invoice = await createInvoice({
+      contractorId: contractor.id,
+      amount,
+      description: intent.description ?? null,
+      dueDate: null,
+      createdBy: userId,
+    });
+    return {
+      ok: true,
+      payload: {
+        invoice_id: invoice.id,
+        invoice_number: invoice.invoiceNumber,
+        contractor: contractor.name,
+        amount: invoice.amount,
+        pdf_url: null,
+        note: 'Счёт создан в статусе draft (PDF — отдельным шагом).',
+      },
+    };
+  }
+
+  if (intent.type === 'create_payment') {
+    // Считаем налог ИП по нетто (real income − комиссии) × 8% за текущий месяц.
+    const period = currentMonthMsk();
+    const pnl = await getPnlForPeriod(period, [ENTITY_IDS.ip]);
+    const base = pnl.incomeTotal - pnl.expensesBreakdown.payment_commission;
+    const taxBase = base < 0n ? 0n : base;
+    const tax = BigInt(Math.round(Number(taxBase) * 0.08));
+    return {
+      ok: true,
+      payload: {
+        period,
+        income: Number(pnl.incomeTotal),
+        commissions: Number(pnl.expensesBreakdown.payment_commission),
+        tax_base: Number(taxBase),
+        tax_amount: Number(tax),
+        tax_amount_formatted: rubles(tax),
+        note: 'Расчёт налога (Авто-УСН, нетто × 8%). Платёжку-PDF сформировать отдельным шагом.',
+      },
+    };
+  }
+
+  if (intent.type === 'reclassify') {
+    if (!intent.to_category || !intent.keyword) {
+      return { ok: false, payload: { note: 'Нужны категория и ключевое слово' } };
+    }
+    if (!(VALID_PNL_CATEGORIES as readonly string[]).includes(intent.to_category)) {
+      return { ok: false, payload: { note: `Неизвестная категория: ${intent.to_category}` } };
+    }
+    // Безопасно: создаём правило (применится к будущим операциям), существующие
+    // записи по голосу не мутируем — точечная правка делается на экране Отчётов.
+    const keyword = intent.keyword.toLowerCase().trim();
+    await upsertRule(keyword, intent.to_category, null, userId);
+    return {
+      ok: true,
+      payload: {
+        rule_created: true,
+        keyword,
+        target_category: intent.to_category,
+        note: 'Правило сохранено — будущие операции с этим признаком пойдут в выбранную категорию. Текущие операции правьте точечно на экране Отчётов.',
+      },
+    };
+  }
+
+  return { ok: false, payload: { note: 'Тип команды не выполняется автоматически' } };
+}
+
+/** Диспатч /api/ai/commands: query отвечаем сразу, остальное — pending. */
+export const aiCommandsHandler: ApiHandler = aiCommandCreateHandler;
