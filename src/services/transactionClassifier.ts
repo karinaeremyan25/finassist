@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { config } from '../config.js';
 import { callClaude } from './claude.js';
 import { listRules, matchRule } from '../db/repositories/categoryRules.js';
+import { getActivePayrollPatterns } from '../db/repositories/employees.js';
 import { childLogger } from '../utils/logger.js';
 
 /**
@@ -258,9 +259,24 @@ export async function classifyTransactions(txs: TxToClassify[]): Promise<TxClass
     log.warn({ error: err instanceof Error ? err.message : String(err) }, 'category_rules_load_failed');
   }
 
+  // Сотрудники ФОТ: перевод этому человеку (counterparty совпал с match_pattern)
+  // → payroll детерминированно, выше Claude. Источник — справочник employees.
+  let payrollPatterns: { id: string; pattern: string }[] = [];
+  try {
+    payrollPatterns = await getActivePayrollPatterns();
+  } catch (err) {
+    log.warn({ error: err instanceof Error ? err.message : String(err) }, 'payroll_patterns_load_failed');
+  }
+
   const ruleResults: TxClassification[] = [];
   const needClaude: TxToClassify[] = [];
   for (const tx of expenses) {
+    // 0. Сотрудник из справочника ФОТ → payroll.
+    const cp = (tx.counterparty ?? '').toLowerCase();
+    if (cp.length > 0 && payrollPatterns.some((p) => cp.includes(p.pattern))) {
+      ruleResults.push({ id: tx.id, pnlCategory: 'payroll', confidence: 1, isPersonal: false });
+      continue;
+    }
     const rule = rules.length > 0 ? matchRule(rules, tx.counterparty, tx.description, null) : null;
     if (rule !== null) {
       ruleResults.push({

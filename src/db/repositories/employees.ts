@@ -130,6 +130,21 @@ export async function listEmployees(
   }));
 }
 
+/**
+ * Активные сотрудники с непустым match_pattern — для классификатора:
+ * перевод этому человеку (counterparty совпал) → ФОТ автоматически.
+ */
+export async function getActivePayrollPatterns(): Promise<{ id: string; pattern: string }[]> {
+  const rows = await sql<{ id: string; match_pattern: string }[]>`
+    SELECT id, match_pattern
+    FROM employees
+    WHERE status = 'active'
+      AND match_pattern IS NOT NULL
+      AND length(trim(match_pattern)) > 0
+  `;
+  return rows.map((r) => ({ id: r.id, pattern: r.match_pattern.toLowerCase() }));
+}
+
 /** Один сотрудник по id (или null). */
 export async function getEmployee(id: string): Promise<EmployeeRow | null> {
   const rows = await sql<{
