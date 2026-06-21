@@ -1,7 +1,8 @@
 /** Экран Settings (§9): выбор юрлица/направления/периода — пишет в общий стейт. */
 
 import { Link } from 'react-router-dom';
-import { Users as UsersIcon, ChevronRight } from 'lucide-react';
+import { Users as UsersIcon, Wallet, Briefcase, Sparkles, ChevronRight } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { Header } from '../components/Header';
 import { SectionHeader } from '../components/AppLayout';
 import { FilterBar } from '../components/FilterBar';
@@ -32,6 +33,15 @@ export function Settings() {
             label="Сегодня"
             onClick={() => setPeriod({ from: today(), to: today() })}
           />
+        </div>
+
+        <div className="mt-6">
+          <SectionHeader title="Модули" />
+          <div className="flex flex-col gap-2">
+            <NavRow to="/employees" icon={Wallet} title="ФОТ" hint="Зарплаты, выплаты, остатки по сотрудникам" />
+            <NavRow to="/contractors" icon={Briefcase} title="Контрагенты" hint="Счета, платежи, задолженность" />
+            <NavRow to="/ai-commands" icon={Sparkles} title="AI-команды" hint="Счета, налог, переклассификация текстом" />
+          </div>
         </div>
 
         {isOwner ? (
@@ -65,6 +75,34 @@ export function Settings() {
         ) : null}
       </section>
     </>
+  );
+}
+
+function NavRow({
+  to,
+  icon: Icon,
+  title,
+  hint,
+}: {
+  to: string;
+  icon: LucideIcon;
+  title: string;
+  hint: string;
+}) {
+  return (
+    <Link
+      to={to}
+      className="flex min-h-[44px] items-center gap-3 rounded-md bg-surface-2 px-4 py-3 active:bg-surface-3"
+    >
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-pill bg-surface-3 text-accent">
+        <Icon size={18} strokeWidth={2} />
+      </span>
+      <span className="flex-1">
+        <span className="block text-[15px] text-ink">{title}</span>
+        <span className="block text-[12px] text-ink-faint">{hint}</span>
+      </span>
+      <ChevronRight size={18} strokeWidth={2} className="shrink-0 text-ink-faint" />
+    </Link>
   );
 }
 

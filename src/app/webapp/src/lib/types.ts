@@ -263,4 +263,134 @@ export interface SetTxCategoryResponse {
   category: string;
   needs_review: boolean;
   category_overridden_at: string;
+  rule_created?: boolean;
+}
+
+// ── ФОТ (/api/employees) — SPEC v2.1 US-101 ─────────────────────────────────
+
+export type Company = 'ip' | 'ooo';
+export type EmployeeStatus = 'active' | 'on_leave' | 'dismissed';
+
+export interface EmployeeRow {
+  id: string;
+  company_id: Company;
+  full_name: string;
+  position: string | null;
+  status: EmployeeStatus;
+  /** Оклад, копейки. null — не задан. */
+  salary_monthly: number | null;
+  /** Выплачено за текущий месяц, копейки. */
+  total_paid_current: number;
+  total_paid_prev: number;
+  /** Оклад − выплачено за месяц. null если оклад не задан. */
+  balance: number | null;
+}
+
+export interface EmployeesResponse {
+  period: string;
+  data: EmployeeRow[];
+}
+
+export interface EmployeeTxItem {
+  id: string;
+  /** Сумма со знаком, копейки. */
+  amount: number;
+  flow_type: 'income' | 'expense';
+  pnl_category: string | null;
+  description: string | null;
+  counterparty: string | null;
+  date_transaction: string;
+  tx_status: string;
+  tochka_transaction_id: string | null;
+}
+
+export interface EmployeeTransactionsResponse {
+  employee: { id: string; full_name: string; position: string | null };
+  data: EmployeeTxItem[];
+}
+
+// ── Контрагенты (/api/contractors) — US-102 ─────────────────────────────────
+
+export type InvoiceStatus = 'draft' | 'sent' | 'paid' | 'cancelled';
+
+export interface ContractorInvoice {
+  id: string;
+  invoice_number: string;
+  amount: number;
+  description: string | null;
+  due_date: string | null;
+  status: InvoiceStatus;
+  pdf_url: string | null;
+  date_paid: string | null;
+}
+
+export interface ContractorPayment {
+  id: string;
+  amount: number;
+  description: string | null;
+  date: string;
+  tochka_transaction_id: string | null;
+}
+
+export interface ContractorRow {
+  id: string;
+  company_id: Company;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  inn: string | null;
+  contractor_type: 'individual' | 'company' | 'self_employed';
+  status: 'active' | 'archived';
+  total_invoiced: number;
+  total_paid: number;
+  balance_owed: number;
+  invoices: ContractorInvoice[];
+  payments: ContractorPayment[];
+}
+
+export interface ContractorsResponse {
+  data: ContractorRow[];
+}
+
+export interface InvoiceGenerateResponse {
+  id: string;
+  invoice_number: string;
+  status: InvoiceStatus;
+  amount: number;
+  pdf_url: string | null;
+}
+
+// ── AI-оркестратор (/api/ai/commands) — US-105 ──────────────────────────────
+
+export interface AiCommandIntent {
+  type: 'create_invoice' | 'create_payment' | 'reclassify' | 'query' | 'unknown';
+  contractor_name?: string | null;
+  amount_rub?: number | null;
+  description?: string | null;
+  to_category?: string | null;
+  keyword?: string | null;
+  preview: string;
+  needs_clarification?: boolean;
+}
+
+export interface AiCommandResponse {
+  id: string;
+  status: 'pending' | 'needs_clarification' | 'failed';
+  ai_response: AiCommandIntent;
+  needs_approval: boolean;
+}
+
+export interface AiCommandApproveResponse {
+  status: 'executed' | 'failed' | 'rejected';
+  result?: Record<string, unknown>;
+}
+
+// ── Деньги в пути (/api/analytics/pnl/in-transit) — US-104 ───────────────────
+
+export interface InTransitResponse {
+  entity: PnlEntity;
+  period: string;
+  income: { total: number; in_transit: number; real_income: number };
+  expenses: { total: number; in_transit: number; real_expenses: number };
+  tax_net: number;
 }

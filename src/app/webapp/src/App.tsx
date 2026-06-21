@@ -9,6 +9,9 @@ import { PnL } from './screens/PnL';
 import { Users } from './screens/Users';
 import { Settings } from './screens/Settings';
 import { Chat } from './screens/Chat';
+import { Employees } from './screens/Employees';
+import { Contractors } from './screens/Contractors';
+import { AICommands } from './screens/AICommands';
 
 function Gate() {
   const { sessionLoading, sessionError, retrySession } = useApp();
@@ -44,6 +47,9 @@ function Gate() {
         <Route path="/users" element={<Users />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/chat" element={<Chat />} />
+        <Route path="/employees" element={<Employees />} />
+        <Route path="/contractors" element={<Contractors />} />
+        <Route path="/ai-commands" element={<AICommands />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     </AppLayout>

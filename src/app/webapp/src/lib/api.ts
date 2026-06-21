@@ -9,9 +9,18 @@ import type {
   AdminListResponse,
   AdminUserResponse,
   AiChatResponse,
+  AiCommandApproveResponse,
+  AiCommandResponse,
   AnalyticsSummary,
+  Company,
+  ContractorsResponse,
+  EmployeeStatus,
+  EmployeeTransactionsResponse,
+  EmployeesResponse,
   FundsResponse,
   InsightsResponse,
+  InTransitResponse,
+  InvoiceGenerateResponse,
   Period,
   PersonalSpendingResponse,
   PlanResponse,
@@ -174,6 +183,81 @@ export const api = {
 
   exportReport(period: Period, filters?: Filters): Promise<{ ok: boolean; rows?: number; error?: string }> {
     return request(`/api/analytics/export?${buildQuery(period, filters)}`);
+  },
+
+  // ── ФОТ (/api/employees) — US-101 ─────────────────────────────────────────
+
+  employees(company?: Company, status: EmployeeStatus = 'active', period?: string): Promise<EmployeesResponse> {
+    const p = new URLSearchParams();
+    if (company) p.set('company', company);
+    if (status) p.set('status', status);
+    if (period) p.set('period', period);
+    return request<EmployeesResponse>(`/api/employees?${p.toString()}`);
+  },
+
+  employeeTransactions(id: string): Promise<EmployeeTransactionsResponse> {
+    return request<EmployeeTransactionsResponse>(`/api/employees/transactions?id=${encodeURIComponent(id)}`);
+  },
+
+  createEmployee(body: {
+    company_id: Company;
+    full_name: string;
+    position?: string | null;
+    salary_monthly?: string | number | null;
+    match_pattern?: string | null;
+  }): Promise<{ id: string }> {
+    return request('/api/employees', { method: 'POST', body: JSON.stringify(body) });
+  },
+
+  // ── Контрагенты (/api/contractors) — US-102 ───────────────────────────────
+
+  contractors(company?: Company): Promise<ContractorsResponse> {
+    const q = company ? `?company=${company}` : '';
+    return request<ContractorsResponse>(`/api/contractors${q}`);
+  },
+
+  createContractor(body: {
+    company_id: Company;
+    name: string;
+    inn?: string | null;
+    match_pattern?: string | null;
+  }): Promise<{ id: string }> {
+    return request('/api/contractors', { method: 'POST', body: JSON.stringify(body) });
+  },
+
+  generateInvoice(body: {
+    contractor_id: string;
+    amount: string | number;
+    description?: string | null;
+    due_date?: string | null;
+  }): Promise<InvoiceGenerateResponse> {
+    return request<InvoiceGenerateResponse>('/api/invoices/generate', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  },
+
+  // ── AI-оркестратор (/api/ai/commands) — US-105 ────────────────────────────
+
+  aiCommand(command: string): Promise<AiCommandResponse> {
+    return request<AiCommandResponse>('/api/ai/commands', {
+      method: 'POST',
+      body: JSON.stringify({ command }),
+    });
+  },
+
+  aiCommandApprove(id: string, approved: boolean): Promise<AiCommandApproveResponse> {
+    return request<AiCommandApproveResponse>('/api/ai/commands/approve', {
+      method: 'POST',
+      body: JSON.stringify({ id, approved }),
+    });
+  },
+
+  // ── Деньги в пути (/api/analytics/pnl/in-transit) — US-104 ─────────────────
+
+  inTransit(entity: PnlEntity, period: string): Promise<InTransitResponse> {
+    const q = new URLSearchParams({ entity, period }).toString();
+    return request<InTransitResponse>(`/api/analytics/pnl/in-transit?${q}`);
   },
 
   // ── Админка: управление пользователями (только owner) ────────────────────
