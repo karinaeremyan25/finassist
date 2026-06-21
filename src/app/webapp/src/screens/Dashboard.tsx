@@ -14,7 +14,7 @@ import { useFilters } from '../state/FilterContext';
 import { useAsync } from '../lib/useAsync';
 import { api } from '../lib/api';
 import { rubles } from '../lib/money';
-import { currentMonthYm, formatMonthLabel, formatYmLabel } from '../lib/dates';
+import { currentMonthYm, formatYmLabel } from '../lib/dates';
 
 export function Dashboard() {
   const { period, entity_id, direction_id } = useFilters();
@@ -133,15 +133,15 @@ export function Dashboard() {
         ) : null}
       </section>
 
-      {/* Donut */}
+      {/* Donut — деньги по фондам (факт) */}
       <section className="mt-6 px-4">
         <SectionHeader
-          title="Распределение выручки (план)"
-          right={<span className="num">{formatMonthLabel(period.from)}</span>}
+          title="Деньги по фондам"
+          right={<span className="num">сейчас</span>}
         />
         <p className="-mt-1 mb-2 text-[12px] leading-[16px] text-ink-faint">
-          Как доход распределяется по фондам по твоей системе (план). Это не фактическая
-          прибыль — её и маржу смотри в разделе P&amp;L.
+          Сколько денег накоплено в каждом фонде сейчас. Те же суммы — в разделе
+          «Фонды». Прибыль и маржу смотри в P&amp;L.
         </p>
         {summary.status === 'loading' ? (
           <div className="flex flex-col items-center gap-4 py-4">
@@ -149,10 +149,10 @@ export function Dashboard() {
             <Skeleton className="h-24 w-full" />
           </div>
         ) : summary.status === 'success' && summary.data ? (
-          summary.data.totalIncome > 0 ? (
+          summary.data.distribution.length > 0 ? (
             <Donut summary={summary.data} />
           ) : (
-            <EmptyState hint="Нет выручки за период — диаграмма скрыта." />
+            <EmptyState hint="Пока нет накоплений в фондах." />
           )
         ) : null}
       </section>

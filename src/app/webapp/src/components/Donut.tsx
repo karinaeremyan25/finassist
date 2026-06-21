@@ -1,8 +1,8 @@
 /**
- * Donut «Распределение выручки» (mini-app-design.md §6).
- * Целое = Выручка (totalIncome). 5 непересекающихся долей.
- * Центр = margin% (Прибыль / Выручка). Легенда-таблица = a11y-fallback.
- * Маркеры различаются формой (●/◆/■/▲/◆) и цветом.
+ * Donut «Деньги по фондам» (mini-app-design.md §6).
+ * Целое = сумма фактических балансов фондов-накоплений. Доли = реальные балансы
+ * (совпадают со вкладкой «Фонды»). Центр = крупнейший фонд или итог.
+ * Легенда-таблица = a11y-fallback. Маркеры различаются формой и цветом.
  */
 
 import { useState } from 'react';
@@ -24,52 +24,44 @@ const prefersReducedMotion =
 
 // Палитра для фондов (по порядку) + зелёный для прибыли.
 const FUND_COLORS = ['#38BDF8', '#FBBF24', '#94A3B8', '#A78BFA', '#F472B6', '#22D3EE'];
-const PROFIT_COLOR = '#34D399';
 const MARKERS = ['●', '■', '▲', '◆', '◇', '★', '⬟'];
 
 function buildSegments(summary: AnalyticsSummary): Segment[] {
-  // «Распределение выручки» по системе Карины: доход × % каждого фонда
-  // (Благодарность 65%, Кредиты 10%, Налог 8%, Резерв 7%, Земля 5%) + Прибыль 5%.
-  // Доли суммируются в 100% — фонды, обязательства и прибыль в одной диаграмме.
-  let fundIdx = 0;
+  // Доли = фактические балансы фондов-накоплений (как во вкладке «Фонды»).
   return summary.distribution
     .filter((d) => d.amount > 0)
     .map((d, i) => ({
       key: `${d.kind}-${i}`,
       label: d.label,
       value: d.amount,
-      color: d.kind === 'profit' ? PROFIT_COLOR : FUND_COLORS[fundIdx++ % FUND_COLORS.length]!,
+      color: FUND_COLORS[i % FUND_COLORS.length]!,
       marker: MARKERS[i % MARKERS.length]!,
     }));
 }
 
 export function Donut({ summary }: { summary: AnalyticsSummary }) {
   const [active, setActive] = useState<string | null>(null);
-  const revenue = summary.totalIncome;
   const segments = buildSegments(summary);
   const total = segments.reduce((acc, s) => acc + s.value, 0) || 1;
 
-  const profitSlice = summary.distribution.find((d) => d.kind === 'profit');
-  const marginPct = profitSlice ? Math.round(profitSlice.percent) : 0;
-
   const pct = (v: number): number => Math.round((v / total) * 100);
 
-  // Центр кольца: выбран ломтик → его %, название и сумма; иначе — прибыль (план).
+  // Центр кольца: выбран ломтик → его %, название и сумма; иначе — итог по фондам.
   const activeSeg = segments.find((s) => s.key === active) ?? null;
-  const centerPct = activeSeg ? pct(activeSeg.value) : marginPct;
-  const centerLabel = activeSeg ? activeSeg.label : 'Прибыль (план)';
-  const centerAmount = activeSeg ? rubles(activeSeg.value) : null;
+  const centerPct = activeSeg ? pct(activeSeg.value) : 100;
+  const centerLabel = activeSeg ? activeSeg.label : 'Все фонды';
+  const centerAmount = activeSeg ? rubles(activeSeg.value) : rubles(total);
 
   const ariaLabel =
-    `Распределение выручки ${rubles(revenue)}. ` +
+    `Деньги по фондам, итого ${rubles(total)}. ` +
     segments.map((s) => `${s.label}: ${pct(s.value)}%`).join(', ') +
     '.';
 
   return (
     <div>
       <p className="mb-1 text-[13px] font-medium text-ink-muted">
-        Распределение выручки{' '}
-        <span className="num text-ink">{rubles(revenue)}</span>
+        Всего в фондах{' '}
+        <span className="num text-ink">{rubles(total)}</span>
       </p>
 
       <div className="relative mx-auto" style={{ width: 200, height: 200 }} role="img" aria-label={ariaLabel}>
@@ -117,7 +109,7 @@ export function Donut({ summary }: { summary: AnalyticsSummary }) {
       </div>
 
       {/* Легенда-таблица (обязательный a11y-fallback, §6.3) */}
-      <ul className="mt-4 flex flex-col gap-2" aria-label="Доли распределения выручки">
+      <ul className="mt-4 flex flex-col gap-2" aria-label="Балансы фондов">
         {segments.map((s) => {
           const isActive = active === s.key;
           return (
@@ -149,7 +141,7 @@ export function Donut({ summary }: { summary: AnalyticsSummary }) {
 
       {/* Скрытая таблица для скринридеров */}
       <table className="sr-only">
-        <caption>Распределение выручки {rubles(revenue)}</caption>
+        <caption>Деньги по фондам, итого {rubles(total)}</caption>
         <thead>
           <tr>
             <th>Доля</th>

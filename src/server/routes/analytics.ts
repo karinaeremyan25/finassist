@@ -143,21 +143,23 @@ export const summaryHandler: ApiHandler = async (req) => {
       totals.totalIncomeKopecks - totals.totalExpenseKopecks - taxFund - gratitudeFund - creditFund;
     const profitFund = rawProfit < 0n ? 0n : rawProfit;
 
-    // Диаграмма «Распределение выручки»: доход × плановый % каждого фонда
-    // (система Карины: Благодарность 65%, Кредиты 10%, Налог 8%, Резерв 7%,
-    // Земля 5% = 95%), остаток — Прибыль 5%. Доли суммируются в 100%.
-    const revenue = totals.totalIncomeKopecks;
-    const distribution: DistributionSlice[] = [];
-    let allocated = 0n;
-    for (const f of fundDistribution) {
-      const amount = (revenue * BigInt(Math.round(f.percent * 100))) / 10000n;
-      allocated += amount;
-      distribution.push({ label: f.name, amount, percent: f.percent, kind: 'fund' });
-    }
-    const profitAmount = revenue > allocated ? revenue - allocated : 0n;
-    const profitPercent =
-      revenue > 0n ? Math.round((Number(profitAmount) / Number(revenue)) * 1000) / 10 : 0;
-    distribution.push({ label: 'Прибыль (план)', amount: profitAmount, percent: profitPercent, kind: 'profit' });
+    // Donut «Деньги по фондам»: ФАКТИЧЕСКИЕ балансы фондов-накоплений (та же
+    // система Карины: Благодарность, Кредиты, Налог, Резерв, Земля), чтобы
+    // цифры на Главной совпадали со вкладкой «Фонды». Раньше здесь был план
+    // (доход × %) + синтетическая «Прибыль» — это путало (Земля на Главной ≠
+    // Земля в Фондах, и «Прибыль» выглядела фондом, которого нет).
+    const donutCodes = new Set(fundDistribution.map((f) => f.code));
+    const donutFunds = fundBalances
+      .filter((b) => donutCodes.has(b.code) && b.balanceKopecks > 0n)
+      .sort((a, b) => (a.balanceKopecks < b.balanceKopecks ? 1 : -1));
+    const donutTotal = donutFunds.reduce((s, b) => s + b.balanceKopecks, 0n);
+    const distribution: DistributionSlice[] = donutFunds.map((b) => ({
+      label: b.displayName,
+      amount: b.balanceKopecks,
+      percent:
+        donutTotal > 0n ? Math.round((Number(b.balanceKopecks) / Number(donutTotal)) * 1000) / 10 : 0,
+      kind: 'fund' as const,
+    }));
 
     // Деньги на ИП — сумма счетов с префиксом 40802 (ИП-счета Точки),
     // на ООО — счета с префиксом 40702. Префикс надёжнее, чем funds.entity_id.
