@@ -26,6 +26,7 @@ import {
 import { employeesHandler, employeeTransactionsHandler } from './routes/employees.js';
 import { contractorsHandler, contractorsSyncHandler, invoiceGenerateHandler } from './routes/contractors.js';
 import { aiCommandsHandler, aiCommandApproveHandler, aiAssistantHandler, aiTranscribeHandler } from './routes/aiCommands.js';
+import { loansListHandler } from './routes/loans.js';
 
 export function buildRouter(): Router {
   const router = new Router();
@@ -102,6 +103,9 @@ export function buildRouter(): Router {
   router.add('POST', '/api/contractors', contractorsHandler);
   router.post('/api/contractors/sync', contractorsSyncHandler);
   router.post('/api/invoices/generate', invoiceGenerateHandler);
+
+  // ── Кредиты ────────────────────────────────────────────────────────────────
+  router.get('/api/loans', loansListHandler);
 
   // ── AI-ассистент: наставник + оркестратор в одном (US-105) ────────────────
   router.post('/api/ai/assistant', aiAssistantHandler);

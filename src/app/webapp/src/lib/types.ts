@@ -362,6 +362,30 @@ export interface InvoiceGenerateResponse {
   pdf_url: string | null;
 }
 
+// ── Кредиты (/api/loans) ────────────────────────────────────────────────────
+
+export interface LoanPaymentItem {
+  id: string;
+  amount: number;
+  description: string | null;
+  date: string;
+  tochka_transaction_id: string | null;
+}
+
+export interface LoanCreditorRow {
+  name: string;
+  total_paid: number;
+  count: number;
+  first_date: string;
+  last_date: string;
+  payments: LoanPaymentItem[];
+}
+
+export interface LoansResponse {
+  total: number;
+  data: LoanCreditorRow[];
+}
+
 // ── AI-оркестратор (/api/ai/commands) — US-105 ──────────────────────────────
 
 export interface AiCommandIntent {

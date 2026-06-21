@@ -22,6 +22,7 @@ import type {
   InsightsResponse,
   InTransitResponse,
   InvoiceGenerateResponse,
+  LoansResponse,
   Period,
   PersonalSpendingResponse,
   PlanResponse,
@@ -243,6 +244,13 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     });
+  },
+
+  // ── Кредиты (/api/loans) ──────────────────────────────────────────────────
+
+  loans(company?: Company): Promise<LoansResponse> {
+    const q = company ? `?company=${company}` : '';
+    return request<LoansResponse>(`/api/loans${q}`);
   },
 
   // ── AI-оркестратор (/api/ai/commands) — US-105 ────────────────────────────
