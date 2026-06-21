@@ -6,7 +6,7 @@
 
 import { useState } from 'react';
 import { Send, Check, X } from 'lucide-react';
-import { Header } from '../components/Header';
+import { SubHeader } from '../components/SubHeader';
 import { useApp } from '../state/FilterContext';
 import { api } from '../lib/api';
 import { hapticSelection } from '../lib/telegram';
@@ -68,9 +68,8 @@ export function AICommands() {
 
   return (
     <>
-      <Header />
-      <section className="px-4 -mt-2">
-        <h1 className="mb-1 text-[22px] font-semibold text-ink">AI-команды</h1>
+      <SubHeader title="AI-команды" />
+      <section className="px-4 pt-3">
         <p className="mb-4 text-[13px] text-ink-muted">
           Создавайте счета, считайте налог, переклассифицируйте — текстом.
         </p>

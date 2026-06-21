@@ -326,7 +326,9 @@ export interface ContractorInvoice {
 
 export interface ContractorPayment {
   id: string;
+  /** Сумма со знаком: поступление +, оплата −. */
   amount: number;
+  flow_type: 'income' | 'expense';
   description: string | null;
   date: string;
   tochka_transaction_id: string | null;

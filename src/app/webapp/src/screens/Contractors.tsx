@@ -5,12 +5,12 @@
  */
 
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, Plus } from 'lucide-react';
-import { Header } from '../components/Header';
+import { ChevronDown, ChevronRight, Plus, RefreshCw } from 'lucide-react';
+import { SubHeader } from '../components/SubHeader';
 import { Skeleton, ErrorState, EmptyState } from '../components/States';
 import { useAsync } from '../lib/useAsync';
 import { api } from '../lib/api';
-import { rubles } from '../lib/money';
+import { rubles, rublesSigned } from '../lib/money';
 import { hapticSelection } from '../lib/telegram';
 import type { Company, ContractorRow, InvoiceStatus } from '../lib/types';
 
@@ -28,16 +28,31 @@ const STATUS_LABEL: Record<InvoiceStatus, string> = {
 
 export function Contractors() {
   const [company, setCompany] = useState<Company>('ooo');
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
   const list = useAsync(() => api.contractors(company), [company]);
+
+  async function syncFromTochka() {
+    setSyncing(true);
+    setSyncMsg(null);
+    try {
+      const res = await api.syncContractors(company);
+      setSyncMsg(res.created > 0 ? `Загружено новых: ${res.created}` : 'Новых контрагентов нет');
+      list.reload();
+    } catch {
+      setSyncMsg('Не удалось загрузить из Точки');
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   return (
     <>
-      <Header />
-      <section className="px-4 -mt-2">
-        <h1 className="mb-1 text-[22px] font-semibold text-ink">Контрагенты</h1>
+      <SubHeader title="Контрагенты" />
+      <section className="px-4 pt-3">
         <p className="mb-4 text-[13px] text-ink-muted">Счета, платежи и остаток задолженности.</p>
 
-        <div className="mb-4 flex gap-1 rounded-pill bg-surface-1 p-1">
+        <div className="mb-3 flex gap-1 rounded-pill bg-surface-1 p-1">
           {FILTERS.map((f) => {
             const active = f.key === company;
             return (
@@ -58,6 +73,20 @@ export function Contractors() {
             );
           })}
         </div>
+
+        <button
+          type="button"
+          disabled={syncing}
+          onClick={() => {
+            hapticSelection();
+            void syncFromTochka();
+          }}
+          className="mb-2 inline-flex min-h-[40px] items-center gap-1.5 rounded-pill border border-border-strong bg-surface-2 px-4 text-[13px] font-medium text-ink active:bg-surface-3 disabled:opacity-60"
+        >
+          <RefreshCw size={15} strokeWidth={2} className={syncing ? 'animate-spin' : ''} />
+          {syncing ? 'Загружаю из Точки…' : 'Загрузить из Точки'}
+        </button>
+        {syncMsg ? <p className="mb-2 text-[12px] text-ink-muted">{syncMsg}</p> : null}
       </section>
 
       <section className="px-4 pb-4">
@@ -69,7 +98,7 @@ export function Contractors() {
         ) : list.status === 'error' ? (
           <ErrorState message={list.error ?? undefined} onRetry={list.reload} />
         ) : !list.data || list.data.data.length === 0 ? (
-          <EmptyState title="Нет контрагентов" hint="Контрагенты появляются при создании счёта или из платежей." />
+          <EmptyState title="Нет контрагентов" hint="Нажмите «Загрузить из Точки» — заведём контрагентов из выписки." />
         ) : (
           <ul className="flex flex-col gap-3">
             {list.data.data.map((c) => (
@@ -149,7 +178,12 @@ function ContractorCard({ c, onChange }: { c: ContractorRow; onChange: () => voi
                       {p.tochka_transaction_id ? ' · чек Точки' : ''}
                     </span>
                   </span>
-                  <span className="num shrink-0 text-[13px] font-semibold text-income">{rubles(p.amount)}</span>
+                  <span
+                    className="num shrink-0 text-[13px] font-semibold"
+                    style={{ color: p.amount < 0 ? 'var(--expense)' : 'var(--income)' }}
+                  >
+                    {rublesSigned(p.amount)}
+                  </span>
                 </li>
               ))}
             </ul>

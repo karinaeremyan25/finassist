@@ -225,6 +225,12 @@ export const api = {
     return request('/api/contractors', { method: 'POST', body: JSON.stringify(body) });
   },
 
+  /** Завести контрагентов из выписки Точки (по counterparty). */
+  syncContractors(company?: Company): Promise<{ ok: boolean; created: number; error?: string }> {
+    const q = company ? `?company=${company}` : '';
+    return request(`/api/contractors/sync${q}`, { method: 'POST', body: '{}' });
+  },
+
   generateInvoice(body: {
     contractor_id: string;
     amount: string | number;

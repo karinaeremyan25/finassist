@@ -6,7 +6,7 @@
 
 import { useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import { Header } from '../components/Header';
+import { SubHeader } from '../components/SubHeader';
 import { Skeleton, ErrorState, EmptyState } from '../components/States';
 import { useAsync } from '../lib/useAsync';
 import { api } from '../lib/api';
@@ -29,9 +29,8 @@ export function Employees() {
 
   return (
     <>
-      <Header />
-      <section className="px-4 -mt-2">
-        <h1 className="mb-1 text-[22px] font-semibold text-ink">ФОТ</h1>
+      <SubHeader title="ФОТ" />
+      <section className="px-4 pt-3">
         <p className="mb-4 text-[13px] text-ink-muted">Зарплаты, выплаты и остатки по сотрудникам.</p>
 
         <div className="mb-4 flex gap-1 rounded-pill bg-surface-1 p-1">

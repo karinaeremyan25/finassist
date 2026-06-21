@@ -14,6 +14,7 @@ import { resolveWebAppUser, unauthorizedResponse, WebAppAuthError } from '../aut
 import {
   listContractorsWithBalance,
   createContractor,
+  deriveContractorsFromTransactions,
 } from '../../db/repositories/contractors.js';
 import { createInvoice } from '../../db/repositories/invoices.js';
 import { toKopecks } from '../../utils/money.js';
@@ -74,6 +75,7 @@ export const contractorsListHandler: ApiHandler = async (req): Promise<ApiRespon
           payments: c.payments.map((p) => ({
             id: p.id,
             amount: p.amount,
+            flow_type: p.flowType,
             description: p.description,
             date: p.occurredAt,
             tochka_transaction_id: p.externalId,
@@ -134,6 +136,31 @@ export const contractorCreateHandler: ApiHandler = async (req): Promise<ApiRespo
 export const contractorsHandler: ApiHandler = async (req): Promise<ApiResponse> => {
   if (req.method === 'POST') return contractorCreateHandler(req);
   return contractorsListHandler(req);
+};
+
+// ── POST /api/contractors/sync — завести контрагентов из выписки Точки ──────
+
+const SyncQuerySchema = z.object({ company: CompanySchema.optional() });
+
+export const contractorsSyncHandler: ApiHandler = async (req): Promise<ApiResponse> => {
+  const start = Date.now();
+  try {
+    const user = await resolveWebAppUser(req);
+    const parsed = SyncQuerySchema.safeParse(req.query);
+    const company = parsed.success ? parsed.data.company ?? null : null;
+
+    const created = await deriveContractorsFromTransactions(company);
+
+    log.info(
+      { telegram_id: user.telegramId.toString(), handler: 'contractors_sync', created, latency_ms: Date.now() - start },
+      'contractors_sync_ok'
+    );
+    return { status: 200, body: { ok: true, created } };
+  } catch (err) {
+    if (err instanceof WebAppAuthError) return unauthorizedResponse(err.reason);
+    log.error({ err, handler: 'contractors_sync', latency_ms: Date.now() - start }, 'contractors_sync_error');
+    return { status: 200, body: { ok: false, created: 0, error: 'Не удалось загрузить контрагентов' } };
+  }
 };
 
 // ── POST /api/invoices/generate ────────────────────────────────────────────

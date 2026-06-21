@@ -9,6 +9,7 @@ import { PnL } from './screens/PnL';
 import { Users } from './screens/Users';
 import { Settings } from './screens/Settings';
 import { Chat } from './screens/Chat';
+import { More } from './screens/More';
 import { Employees } from './screens/Employees';
 import { Contractors } from './screens/Contractors';
 import { AICommands } from './screens/AICommands';
@@ -47,6 +48,7 @@ function Gate() {
         <Route path="/users" element={<Users />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/chat" element={<Chat />} />
+        <Route path="/more" element={<More />} />
         <Route path="/employees" element={<Employees />} />
         <Route path="/contractors" element={<Contractors />} />
         <Route path="/ai-commands" element={<AICommands />} />

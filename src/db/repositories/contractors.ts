@@ -8,6 +8,7 @@
  */
 
 import { sql } from '../client.js';
+import { ENTITY_IDS } from './pnl.js';
 
 export type Company = 'ip' | 'ooo';
 export type ContractorType = 'individual' | 'company' | 'self_employed';
@@ -27,10 +28,19 @@ export interface InvoiceRow {
 
 export interface ContractorPaymentRow {
   id: string;
+  /** Сумма со знаком: поступление от контрагента +, оплата контрагенту −. */
   amount: bigint;
+  flowType: 'income' | 'expense';
   description: string | null;
   occurredAt: string;
   externalId: string | null;
+}
+
+/** entity_id → 'ip'|'ooo'|null (по seed-константам). */
+function entityToCompany(entityId: string | null): Company | null {
+  if (entityId === ENTITY_IDS.ip) return 'ip';
+  if (entityId === ENTITY_IDS.ooo) return 'ooo';
+  return null;
 }
 
 export interface ContractorWithBalance {
@@ -105,23 +115,43 @@ export async function listContractorsWithBalance(
     ORDER BY created_at DESC
   `;
 
-  // Платежи: по contractor_id ИЛИ по match_pattern. Делаем один запрос по
-  // contractor_id-связи, и отдельно — по match_pattern (если задан).
+  // Платежи: по явной связи contractor_id ИЛИ по совпадению counterparty с
+  // match_pattern контрагента (контрагенты, заведённые из выписки Точки, хранят
+  // counterparty в match_pattern). Один запрос, разнос по контрагентам в JS.
+  const patterns = contractors
+    .map((c) => c.match_pattern)
+    .filter((p): p is string => p !== null && p.trim().length > 0);
+
   const paymentRows = await sql<{
-    contractor_id: string;
+    contractor_id: string | null;
+    counterparty: string | null;
     id: string;
     amount_rub: bigint;
+    flow_type: 'income' | 'expense';
     description: string | null;
     occurred_at: string;
     external_id: string | null;
   }[]>`
-    SELECT t.contractor_id, t.id, t.amount_rub, t.description,
+    SELECT t.contractor_id, t.counterparty, t.id, t.amount_rub, t.flow_type, t.description,
            t.occurred_at::text AS occurred_at, t.external_id
     FROM transactions t
     WHERE t.deleted_at IS NULL
-      AND t.contractor_id = ANY(${ids}::uuid[])
+      AND (
+        t.contractor_id = ANY(${ids}::uuid[])
+        OR t.counterparty = ANY(${patterns}::text[])
+      )
     ORDER BY t.occurred_at DESC
+    LIMIT 2000
   `;
+
+  // Карта counterparty(lower) → contractorId для разноса платежей без явной связи.
+  const patternToContractor = new Map<string, string>();
+  for (const c of contractors) {
+    if (c.match_pattern !== null && c.match_pattern.trim().length > 0) {
+      patternToContractor.set(c.match_pattern.toLowerCase(), c.id);
+    }
+  }
+  const idSet = new Set(ids);
 
   const invByContractor = new Map<string, InvoiceRow[]>();
   for (const r of invoiceRows) {
@@ -142,15 +172,25 @@ export async function listContractorsWithBalance(
 
   const payByContractor = new Map<string, ContractorPaymentRow[]>();
   for (const r of paymentRows) {
-    const list = payByContractor.get(r.contractor_id) ?? [];
+    // Приоритет — явная связь contractor_id, иначе разносим по match_pattern.
+    const cid =
+      r.contractor_id !== null && idSet.has(r.contractor_id)
+        ? r.contractor_id
+        : r.counterparty !== null
+          ? patternToContractor.get(r.counterparty.toLowerCase())
+          : undefined;
+    if (cid === undefined) continue;
+    const list = payByContractor.get(cid) ?? [];
     list.push({
       id: r.id,
-      amount: r.amount_rub,
+      // Знак: поступление от контрагента +, оплата контрагенту −.
+      amount: r.flow_type === 'expense' ? -r.amount_rub : r.amount_rub,
+      flowType: r.flow_type,
       description: r.description,
       occurredAt: r.occurred_at,
       externalId: r.external_id,
     });
-    payByContractor.set(r.contractor_id, list);
+    payByContractor.set(cid, list);
   }
 
   return contractors.map((c): ContractorWithBalance => {
@@ -159,7 +199,10 @@ export async function listContractorsWithBalance(
     const totalInvoiced = invoices
       .filter((i) => i.status !== 'cancelled')
       .reduce((s, i) => s + i.amount, 0n);
-    const totalPaid = payments.reduce((s, p) => s + p.amount, 0n);
+    // «Оплачено» = поступления ОТ контрагента (income, положительные суммы).
+    const totalPaid = payments
+      .filter((p) => p.flowType === 'income')
+      .reduce((s, p) => s + p.amount, 0n);
     return {
       id: c.id,
       companyId: c.company_id,
@@ -200,6 +243,52 @@ export async function createContractor(input: CreateContractorInput): Promise<st
     RETURNING id
   `;
   return rows[0]!.id;
+}
+
+/**
+ * Заводит контрагентов из выписки Точки: группирует операции по counterparty,
+ * создаёт запись на каждого нового (name=counterparty, match_pattern=counterparty,
+ * company по entity_id). Идемпотентно: существующие (по company+lower(name))
+ * пропускаются. Возвращает число созданных.
+ *
+ * Сервисные «контрагенты» (сам банк) исключаем, чтобы не зашумлять список.
+ */
+export async function deriveContractorsFromTransactions(company: Company | null): Promise<number> {
+  const entityIds =
+    company === 'ip'
+      ? [ENTITY_IDS.ip]
+      : company === 'ooo'
+        ? [ENTITY_IDS.ooo]
+        : [ENTITY_IDS.ip, ENTITY_IDS.ooo];
+
+  const rows = await sql<{ entity_id: string; counterparty: string }[]>`
+    SELECT t.entity_id::text AS entity_id, t.counterparty
+    FROM transactions t
+    WHERE t.deleted_at IS NULL
+      AND t.counterparty IS NOT NULL
+      AND length(trim(t.counterparty)) > 2
+      AND t.counterparty NOT ILIKE '%банк точка%'
+      AND t.entity_id = ANY(${entityIds})
+    GROUP BY t.entity_id, t.counterparty
+    ORDER BY t.counterparty
+  `;
+
+  let created = 0;
+  for (const r of rows) {
+    const comp = entityToCompany(r.entity_id);
+    if (comp === null) continue;
+    const res = await sql<{ id: string }[]>`
+      INSERT INTO contractors (company_id, name, contractor_type, match_pattern)
+      SELECT ${comp}, ${r.counterparty}, 'company', ${r.counterparty}
+      WHERE NOT EXISTS (
+        SELECT 1 FROM contractors c
+        WHERE c.company_id = ${comp} AND lower(c.name) = lower(${r.counterparty})
+      )
+      RETURNING id
+    `;
+    if (res.length > 0) created += 1;
+  }
+  return created;
 }
 
 /** Находит контрагента ООО по точному/похожему имени (для AI-оркестратора). */

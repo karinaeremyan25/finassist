@@ -24,7 +24,7 @@ import {
   updateTxCategoryHandler,
 } from './routes/pnl.js';
 import { employeesHandler, employeeTransactionsHandler } from './routes/employees.js';
-import { contractorsHandler, invoiceGenerateHandler } from './routes/contractors.js';
+import { contractorsHandler, contractorsSyncHandler, invoiceGenerateHandler } from './routes/contractors.js';
 import { aiCommandsHandler, aiCommandApproveHandler } from './routes/aiCommands.js';
 
 export function buildRouter(): Router {
@@ -100,6 +100,7 @@ export function buildRouter(): Router {
   // ── Контрагенты и счета (US-102) ──────────────────────────────────────────
   router.add('GET',  '/api/contractors', contractorsHandler);
   router.add('POST', '/api/contractors', contractorsHandler);
+  router.post('/api/contractors/sync', contractorsSyncHandler);
   router.post('/api/invoices/generate', invoiceGenerateHandler);
 
   // ── AI-оркестратор (US-105) ───────────────────────────────────────────────

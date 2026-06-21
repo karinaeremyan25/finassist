@@ -1,7 +1,7 @@
 /** Нижняя навигация (§7.6): 5 пунктов, активная вкладка подсвечена --accent. */
 
 import { NavLink } from 'react-router-dom';
-import { Home, BarChart3, TrendingUp, Landmark, MessageCircle } from 'lucide-react';
+import { Home, BarChart3, TrendingUp, Landmark, MessageCircle, LayoutGrid } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { hapticSelection } from '../lib/telegram';
 
@@ -17,6 +17,7 @@ const TABS: Tab[] = [
   { to: '/pnl', label: 'P&L', icon: TrendingUp },
   { to: '/funds', label: 'Фонды', icon: Landmark },
   { to: '/chat', label: 'Чат', icon: MessageCircle },
+  { to: '/more', label: 'Ещё', icon: LayoutGrid },
 ];
 
 export function BottomNav() {
