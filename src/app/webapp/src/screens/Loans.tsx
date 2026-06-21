@@ -23,9 +23,15 @@ export function Loans() {
         <p className="mb-4 text-[13px] text-ink-muted">Погашения кредитов по кредиторам.</p>
 
         {list.status === 'success' && list.data && list.data.data.length > 0 ? (
-          <div className="mb-4 rounded-md bg-surface-2 p-4">
-            <p className="text-[13px] font-medium uppercase tracking-[0.04em] text-ink-muted">Всего выплачено</p>
-            <p className="num mt-1 text-[24px] font-bold text-ink">{rubles(list.data.total)}</p>
+          <div className="mb-4 grid grid-cols-2 gap-3">
+            <div className="rounded-md bg-surface-2 p-4">
+              <p className="text-[12px] font-medium uppercase tracking-[0.04em] text-ink-muted">За этот месяц</p>
+              <p className="num mt-1 text-[22px] font-bold text-warning">{rubles(list.data.month_total)}</p>
+            </div>
+            <div className="rounded-md bg-surface-2 p-4">
+              <p className="text-[12px] font-medium uppercase tracking-[0.04em] text-ink-muted">Всего выплачено</p>
+              <p className="num mt-1 text-[22px] font-bold text-ink">{rubles(list.data.total)}</p>
+            </div>
           </div>
         ) : null}
 

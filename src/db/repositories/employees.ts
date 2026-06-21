@@ -145,6 +145,25 @@ export async function getActivePayrollPatterns(): Promise<{ id: string; pattern:
   return rows.map((r) => ({ id: r.id, pattern: r.match_pattern.toLowerCase() }));
 }
 
+/**
+ * Помесячный ФОТ (расходы pnl_category='payroll') за последние N месяцев.
+ * Возвращает [{month:'YYYY-MM', total}] по возрастанию.
+ */
+export async function getPayrollMonthly(monthsBack: number): Promise<{ month: string; total: bigint }[]> {
+  const rows = await sql<{ month: string; total: bigint }[]>`
+    SELECT TO_CHAR(DATE_TRUNC('month', t.occurred_at), 'YYYY-MM') AS month,
+           COALESCE(SUM(t.amount_rub), 0)::bigint AS total
+    FROM transactions t
+    WHERE t.deleted_at IS NULL
+      AND t.flow_type = 'expense'
+      AND t.pnl_category = 'payroll'
+      AND t.occurred_at >= (DATE_TRUNC('month', NOW()) - (${monthsBack}::int - 1) * INTERVAL '1 month')
+    GROUP BY 1
+    ORDER BY 1
+  `;
+  return rows;
+}
+
 /** Один сотрудник по id (или null). */
 export async function getEmployee(id: string): Promise<EmployeeRow | null> {
   const rows = await sql<{

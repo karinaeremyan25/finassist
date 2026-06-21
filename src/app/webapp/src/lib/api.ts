@@ -17,6 +17,7 @@ import type {
   ContractorsResponse,
   EmployeeStatus,
   EmployeeTransactionsResponse,
+  EmployeesAnalyticsResponse,
   EmployeesResponse,
   FundsResponse,
   ImportConfirmResponse,
@@ -203,6 +204,10 @@ export const api = {
 
   employeeTransactions(id: string): Promise<EmployeeTransactionsResponse> {
     return request<EmployeeTransactionsResponse>(`/api/employees/transactions?id=${encodeURIComponent(id)}`);
+  },
+
+  employeesAnalytics(): Promise<EmployeesAnalyticsResponse> {
+    return request<EmployeesAnalyticsResponse>('/api/employees/analytics');
   },
 
   createEmployee(body: {

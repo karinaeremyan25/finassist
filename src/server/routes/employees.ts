@@ -17,6 +17,7 @@ import {
   listEmployees,
   getEmployee,
   getEmployeeTransactions,
+  getPayrollMonthly,
   createEmployee,
   updateEmployee,
 } from '../../db/repositories/employees.js';
@@ -88,6 +89,43 @@ export const employeesListHandler: ApiHandler = async (req): Promise<ApiResponse
     if (err instanceof WebAppAuthError) return unauthorizedResponse(err.reason);
     log.error({ err, handler: 'employees_list', latency_ms: Date.now() - start }, 'employees_list_error');
     return { status: 200, body: { period: currentMonthMsk(), data: [] } };
+  }
+};
+
+// ── GET /api/employees/analytics — помесячный ФОТ + % изменения ─────────────
+
+export const employeesAnalyticsHandler: ApiHandler = async (req): Promise<ApiResponse> => {
+  const start = Date.now();
+  try {
+    const user = await resolveWebAppUser(req);
+    const months = await getPayrollMonthly(6);
+
+    const n = months.length;
+    const current = n > 0 ? months[n - 1]!.total : 0n;
+    const prev = n > 1 ? months[n - 2]!.total : 0n;
+    const deltaPct =
+      prev === 0n ? null : Math.round((Number(current - prev) / Number(prev)) * 1000) / 10;
+    const avg =
+      n > 0 ? months.reduce((s, m) => s + m.total, 0n) / BigInt(n) : 0n;
+
+    log.info(
+      { telegram_id: user.telegramId.toString(), handler: 'employees_analytics', latency_ms: Date.now() - start },
+      'employees_analytics_ok'
+    );
+    return {
+      status: 200,
+      body: {
+        months: months.map((m) => ({ month: m.month, total: m.total })),
+        current_month: current,
+        prev_month: prev,
+        delta_pct: deltaPct,
+        avg_month: avg,
+      },
+    };
+  } catch (err) {
+    if (err instanceof WebAppAuthError) return unauthorizedResponse(err.reason);
+    log.error({ err, handler: 'employees_analytics', latency_ms: Date.now() - start }, 'employees_analytics_error');
+    return { status: 200, body: { months: [], current_month: 0, prev_month: 0, delta_pct: null, avg_month: 0 } };
   }
 };
 

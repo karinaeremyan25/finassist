@@ -23,7 +23,7 @@ import {
   pnlInTransitHandler,
   updateTxCategoryHandler,
 } from './routes/pnl.js';
-import { employeesHandler, employeeTransactionsHandler } from './routes/employees.js';
+import { employeesHandler, employeeTransactionsHandler, employeesAnalyticsHandler } from './routes/employees.js';
 import { contractorsHandler, contractorsSyncHandler, invoiceGenerateHandler } from './routes/contractors.js';
 import { aiCommandsHandler, aiCommandApproveHandler, aiAssistantHandler, aiTranscribeHandler, aiImportImageHandler, aiImportConfirmHandler } from './routes/aiCommands.js';
 import { loansListHandler } from './routes/loans.js';
@@ -97,6 +97,7 @@ export function buildRouter(): Router {
   router.add('POST',  '/api/employees', employeesHandler);
   router.add('PATCH', '/api/employees', employeesHandler);
   router.get('/api/employees/transactions', employeeTransactionsHandler);
+  router.get('/api/employees/analytics', employeesAnalyticsHandler);
 
   // ── Контрагенты и счета (US-102) ──────────────────────────────────────────
   router.add('GET',  '/api/contractors', contractorsHandler);

@@ -519,7 +519,7 @@ async function executeIntent(intent: ParsedIntent, userId: string): Promise<Exec
         tax_base: Number(taxBase),
         tax_amount: Number(tax),
         tax_amount_formatted: rubles(tax),
-        note: 'Расчёт налога (Авто-УСН, нетто × 8%). Платёжку-PDF сформировать отдельным шагом.',
+        note: 'Расчёт налога (Авто-УСН, нетто × 8%). PDF платёжного поручения сформирую после подтверждения реквизитов (ИНН ИП + реквизиты ЕНП) — они нужны, чтобы платёжка была корректной.',
       },
     };
   }

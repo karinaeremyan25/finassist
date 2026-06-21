@@ -23,6 +23,17 @@ export const loansListHandler: ApiHandler = async (req): Promise<ApiResponse> =>
     const creditors = await listLoans(company);
     const total = creditors.reduce((s, c) => s + c.totalPaid, 0n);
 
+    // Сумма за текущий месяц (МСК).
+    const now = new Date();
+    const msk = new Date(now.getTime() + 3 * 60 * 60 * 1000);
+    const ym = `${msk.getUTCFullYear()}-${String(msk.getUTCMonth() + 1).padStart(2, '0')}`;
+    let monthTotal = 0n;
+    for (const c of creditors) {
+      for (const p of c.payments) {
+        if (p.occurredAt.slice(0, 7) === ym) monthTotal += p.amount;
+      }
+    }
+
     log.info(
       { telegram_id: user.telegramId.toString(), handler: 'loans_list', count: creditors.length, latency_ms: Date.now() - start },
       'loans_list_ok'
@@ -32,6 +43,8 @@ export const loansListHandler: ApiHandler = async (req): Promise<ApiResponse> =>
       status: 200,
       body: {
         total,
+        month_total: monthTotal,
+        month: ym,
         data: creditors.map((c) => ({
           name: c.name,
           total_paid: c.totalPaid,

@@ -309,6 +309,19 @@ export interface EmployeeTransactionsResponse {
   data: EmployeeTxItem[];
 }
 
+export interface PayrollMonth {
+  month: string;
+  total: number;
+}
+
+export interface EmployeesAnalyticsResponse {
+  months: PayrollMonth[];
+  current_month: number;
+  prev_month: number;
+  delta_pct: number | null;
+  avg_month: number;
+}
+
 // ── Контрагенты (/api/contractors) — US-102 ─────────────────────────────────
 
 export type InvoiceStatus = 'draft' | 'sent' | 'paid' | 'cancelled';
@@ -383,6 +396,8 @@ export interface LoanCreditorRow {
 
 export interface LoansResponse {
   total: number;
+  month_total: number;
+  month: string;
   data: LoanCreditorRow[];
 }
 
