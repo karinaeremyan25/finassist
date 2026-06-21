@@ -387,6 +387,27 @@ export interface AiCommandApproveResponse {
   result?: Record<string, unknown>;
 }
 
+// Единый AI-ассистент (наставник + оркестратор): ответ ИЛИ действие.
+export interface AiAssistantAnswer {
+  kind: 'answer';
+  answer: string;
+  source?: string | null;
+}
+export interface AiAssistantAction {
+  kind: 'action';
+  id: string;
+  command_type: string;
+  intent: AiCommandIntent;
+  needs_approval: boolean;
+}
+export type AiAssistantResponse = AiAssistantAnswer | AiAssistantAction;
+
+export interface TranscribeResponse {
+  text?: string;
+  ok?: boolean;
+  error?: string;
+}
+
 // ── Деньги в пути (/api/analytics/pnl/in-transit) — US-104 ───────────────────
 
 export interface InTransitResponse {

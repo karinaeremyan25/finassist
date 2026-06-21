@@ -25,7 +25,7 @@ import {
 } from './routes/pnl.js';
 import { employeesHandler, employeeTransactionsHandler } from './routes/employees.js';
 import { contractorsHandler, contractorsSyncHandler, invoiceGenerateHandler } from './routes/contractors.js';
-import { aiCommandsHandler, aiCommandApproveHandler } from './routes/aiCommands.js';
+import { aiCommandsHandler, aiCommandApproveHandler, aiAssistantHandler, aiTranscribeHandler } from './routes/aiCommands.js';
 
 export function buildRouter(): Router {
   const router = new Router();
@@ -103,7 +103,9 @@ export function buildRouter(): Router {
   router.post('/api/contractors/sync', contractorsSyncHandler);
   router.post('/api/invoices/generate', invoiceGenerateHandler);
 
-  // ── AI-оркестратор (US-105) ───────────────────────────────────────────────
+  // ── AI-ассистент: наставник + оркестратор в одном (US-105) ────────────────
+  router.post('/api/ai/assistant', aiAssistantHandler);
+  router.post('/api/ai/transcribe', aiTranscribeHandler);
   router.post('/api/ai/commands', aiCommandsHandler);
   router.post('/api/ai/commands/approve', aiCommandApproveHandler);
 

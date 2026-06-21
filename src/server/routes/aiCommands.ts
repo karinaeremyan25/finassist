@@ -22,6 +22,8 @@ import { findContractorByName, createContractor } from '../../db/repositories/co
 import { createInvoice } from '../../db/repositories/invoices.js';
 import { upsertRule } from '../../db/repositories/categoryRules.js';
 import { getPnlForPeriod, ENTITY_IDS, VALID_PNL_CATEGORIES } from '../../db/repositories/pnl.js';
+import { generateMentorAnswer, MentorError } from '../../services/miniAppAi.js';
+import { transcribeAudio, DeepgramError } from '../../services/deepgram.js';
 import { toKopecks, rubles } from '../../utils/money.js';
 import { childLogger } from '../../utils/logger.js';
 import type { ApiHandler, ApiResponse } from '../http.js';
@@ -138,6 +140,137 @@ export const aiCommandCreateHandler: ApiHandler = async (req): Promise<ApiRespon
     if (err instanceof WebAppAuthError) return unauthorizedResponse(err.reason);
     log.error({ err, handler: 'ai_command_create', latency_ms: Date.now() - start }, 'ai_command_create_error');
     return invalidRequest('Ошибка обработки команды');
+  }
+};
+
+// ── POST /api/ai/assistant — ЕДИНЫЙ AI: совет ИЛИ действие ──────────────────
+// Наставник и оркестратор слиты в один вход (вкладка «AI»). Если сообщение —
+// действие (счёт/платёжка/переклассификация) → возвращаем карточку на подтверждение.
+// Иначе (вопрос/аналитика) → отвечаем как наставник с советами.
+
+const AssistantBodySchema = z.object({
+  question: z.string().min(1).max(2000),
+  entity_id: z.string().uuid().nullish(),
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
+  context: z.string().nullish(),
+});
+
+export const aiAssistantHandler: ApiHandler = async (req): Promise<ApiResponse> => {
+  const start = Date.now();
+  try {
+    const user = await resolveWebAppUser(req);
+    const parsed = AssistantBodySchema.safeParse(req.body);
+    if (!parsed.success) return invalidRequest('Поле question обязательно');
+    const { question, entity_id, from, to, context } = parsed.data;
+
+    // 1. Пытаемся понять, это действие или вопрос.
+    let intent: ParsedIntent | null = null;
+    try {
+      intent = await parseIntent(question);
+    } catch {
+      intent = null; // не распарсилось — уходим в наставника
+    }
+
+    const isAction =
+      intent !== null &&
+      !intent.needs_clarification &&
+      (intent.type === 'create_invoice' || intent.type === 'create_payment' || intent.type === 'reclassify');
+
+    if (isAction && intent !== null) {
+      const id = await logCommand({
+        userId: user.id,
+        commandText: question,
+        commandType: intent.type,
+        status: 'pending',
+        aiResponse: intent,
+      });
+      log.info(
+        { telegram_id: user.telegramId.toString(), handler: 'ai_assistant', kind: 'action', type: intent.type, latency_ms: Date.now() - start },
+        'ai_assistant_action'
+      );
+      return {
+        status: 200,
+        body: { kind: 'action', id, command_type: intent.type, intent, needs_approval: true },
+      };
+    }
+
+    // Если действие без деталей — просим уточнить (короткий ответ-подсказка).
+    if (intent !== null && intent.needs_clarification) {
+      return { status: 200, body: { kind: 'answer', answer: intent.preview, source: 'orchestrator' } };
+    }
+
+    // 2. Вопрос/аналитика → наставник с советами.
+    try {
+      const r = await generateMentorAnswer({
+        question,
+        telegramId: user.telegramId,
+        entityId: entity_id ?? null,
+        from: from ?? null,
+        to: to ?? null,
+        context: context ?? null,
+      });
+      log.info(
+        { telegram_id: user.telegramId.toString(), handler: 'ai_assistant', kind: 'answer', latency_ms: Date.now() - start },
+        'ai_assistant_answer'
+      );
+      return { status: 200, body: { kind: 'answer', answer: r.answer, source: r.source } };
+    } catch (err) {
+      if (err instanceof MentorError) {
+        const hint: Record<string, string> = {
+          off_topic: 'Я помогаю с финансами и аналитикой этого бизнеса, а также создаю счета, считаю налог и переклассифицирую расходы.',
+          insufficient_data: 'Недостаточно данных за выбранный период — попробуйте расширить период.',
+          ai_unavailable: 'AI временно недоступен, попробуйте чуть позже.',
+          invalid_request: 'Вопрос не может быть пустым.',
+        };
+        return { status: 200, body: { kind: 'answer', answer: hint[err.code] ?? 'Не удалось ответить.', source: 'mentor' } };
+      }
+      throw err;
+    }
+  } catch (err) {
+    if (err instanceof WebAppAuthError) return unauthorizedResponse(err.reason);
+    log.error({ err, handler: 'ai_assistant', latency_ms: Date.now() - start }, 'ai_assistant_error');
+    return { status: 200, body: { kind: 'answer', answer: 'Произошла ошибка. Попробуйте ещё раз.', source: 'error' } };
+  }
+};
+
+// ── POST /api/ai/transcribe — голосовая диктовка (Deepgram) ─────────────────
+// Аудио приходит base64 в JSON — это работает одинаково на VPS (http.ts парсит
+// JSON) и на Vercel (req.body уже распарсен; сырой поток rawReq там недоступен).
+// Лимит тела (http.ts MAX_BODY_BYTES=256 КБ) → короткие команды (до ~минуты opus).
+
+const TranscribeBodySchema = z.object({
+  audio_base64: z.string().min(1),
+  mime: z.string().default('audio/webm'),
+});
+
+export const aiTranscribeHandler: ApiHandler = async (req): Promise<ApiResponse> => {
+  const start = Date.now();
+  try {
+    const user = await resolveWebAppUser(req);
+    const parsed = TranscribeBodySchema.safeParse(req.body);
+    if (!parsed.success) return invalidRequest('Нужно поле audio_base64');
+
+    const buffer = Buffer.from(parsed.data.audio_base64, 'base64');
+    if (buffer.length === 0) return invalidRequest('Пустая аудиозапись');
+
+    const text = await transcribeAudio(buffer, parsed.data.mime);
+    log.info(
+      { telegram_id: user.telegramId.toString(), handler: 'ai_transcribe', bytes: buffer.length, latency_ms: Date.now() - start },
+      'ai_transcribe_ok'
+    );
+    return { status: 200, body: { text } };
+  } catch (err) {
+    if (err instanceof WebAppAuthError) return unauthorizedResponse(err.reason);
+    if (err instanceof DeepgramError) {
+      const msg =
+        err.code === 'DEEPGRAM_NOT_CONFIGURED'
+          ? 'Голосовой ввод не настроен (нет ключа Deepgram).'
+          : 'Не удалось распознать речь, попробуйте ещё раз.';
+      return { status: 200, body: { ok: false, error: msg } };
+    }
+    log.error({ err, handler: 'ai_transcribe', latency_ms: Date.now() - start }, 'ai_transcribe_error');
+    return { status: 200, body: { ok: false, error: 'Ошибка распознавания' } };
   }
 };
 

@@ -16,7 +16,7 @@ const TABS: Tab[] = [
   { to: '/transactions', label: 'Отчёты', icon: BarChart3 },
   { to: '/pnl', label: 'P&L', icon: TrendingUp },
   { to: '/funds', label: 'Фонды', icon: Landmark },
-  { to: '/chat', label: 'Чат', icon: MessageCircle },
+  { to: '/chat', label: 'AI', icon: MessageCircle },
   { to: '/more', label: 'Ещё', icon: LayoutGrid },
 ];
 

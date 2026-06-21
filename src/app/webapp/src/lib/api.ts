@@ -9,6 +9,7 @@ import type {
   AdminListResponse,
   AdminUserResponse,
   AiChatResponse,
+  AiAssistantResponse,
   AiCommandApproveResponse,
   AiCommandResponse,
   AnalyticsSummary,
@@ -29,6 +30,7 @@ import type {
   PnlYearResponse,
   SessionResponse,
   SetTxCategoryResponse,
+  TranscribeResponse,
   TransactionsResponse,
   UsersResponse,
 } from './types';
@@ -256,6 +258,28 @@ export const api = {
     return request<AiCommandApproveResponse>('/api/ai/commands/approve', {
       method: 'POST',
       body: JSON.stringify({ id, approved }),
+    });
+  },
+
+  /** Единый AI: вернёт совет (kind:'answer') ИЛИ действие на подтверждение (kind:'action'). */
+  aiAssistant(body: {
+    question: string;
+    entity_id?: string | null;
+    from?: string | null;
+    to?: string | null;
+    context?: string | null;
+  }): Promise<AiAssistantResponse> {
+    return request<AiAssistantResponse>('/api/ai/assistant', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  },
+
+  /** Расшифровка голоса: аудио base64 → текст (Deepgram на бэке). */
+  transcribe(audioBase64: string, mime: string): Promise<TranscribeResponse> {
+    return request<TranscribeResponse>('/api/ai/transcribe', {
+      method: 'POST',
+      body: JSON.stringify({ audio_base64: audioBase64, mime }),
     });
   },
 

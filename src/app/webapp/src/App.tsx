@@ -12,7 +12,6 @@ import { Chat } from './screens/Chat';
 import { More } from './screens/More';
 import { Employees } from './screens/Employees';
 import { Contractors } from './screens/Contractors';
-import { AICommands } from './screens/AICommands';
 
 function Gate() {
   const { sessionLoading, sessionError, retrySession } = useApp();
@@ -51,7 +50,8 @@ function Gate() {
         <Route path="/more" element={<More />} />
         <Route path="/employees" element={<Employees />} />
         <Route path="/contractors" element={<Contractors />} />
-        <Route path="/ai-commands" element={<AICommands />} />
+        {/* AI-команды слиты с чатом → редирект старых ссылок */}
+        <Route path="/ai-commands" element={<Navigate to="/chat" replace />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     </AppLayout>

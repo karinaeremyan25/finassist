@@ -1,7 +1,7 @@
 /** Хаб «Ещё»: входы в модули (ФОТ, Контрагенты, AI-команды) + Команда/Настройки. */
 
 import { Link } from 'react-router-dom';
-import { Wallet, Briefcase, Sparkles, Users as UsersIcon, Settings as SettingsIcon, ChevronRight } from 'lucide-react';
+import { Wallet, Briefcase, Users as UsersIcon, Settings as SettingsIcon, ChevronRight } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Header } from '../components/Header';
 import { SectionHeader } from '../components/AppLayout';
@@ -21,7 +21,6 @@ export function More() {
         <div className="flex flex-col gap-2">
           <Row to="/employees" icon={Wallet} title="ФОТ" hint="Зарплаты, выплаты, остатки по сотрудникам" />
           <Row to="/contractors" icon={Briefcase} title="Контрагенты" hint="Счета, платежи, задолженность" />
-          <Row to="/ai-commands" icon={Sparkles} title="AI-команды" hint="Счета, налог, переклассификация текстом" />
         </div>
 
         <div className="mt-6">
