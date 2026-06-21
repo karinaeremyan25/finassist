@@ -24,6 +24,7 @@ import { upsertRule } from '../../db/repositories/categoryRules.js';
 import { getPnlForPeriod, ENTITY_IDS, VALID_PNL_CATEGORIES } from '../../db/repositories/pnl.js';
 import { generateMentorAnswer, MentorError } from '../../services/miniAppAi.js';
 import { transcribeAudio, DeepgramError } from '../../services/deepgram.js';
+import { importCardTransactions } from '../../db/repositories/cardImport.js';
 import { toKopecks, rubles } from '../../utils/money.js';
 import { childLogger } from '../../utils/logger.js';
 import type { ApiHandler, ApiResponse } from '../http.js';
@@ -274,6 +275,138 @@ export const aiTranscribeHandler: ApiHandler = async (req): Promise<ApiResponse>
     }
     log.error({ err, handler: 'ai_transcribe', latency_ms: Date.now() - start }, 'ai_transcribe_error');
     return { status: 200, body: { ok: false, error: 'Ошибка распознавания' } };
+  }
+};
+
+// ── POST /api/ai/import-image — распознать операции со скриншота карты ──────
+// Карта Лилианы и др. физ-карты API не имеют → заносим по скриншоту. Vision
+// (Opus) извлекает операции, клиент показывает на проверку, затем /import/confirm.
+
+const VisionTxSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  amount_rub: z.union([z.number(), z.string()]),
+  direction: z.enum(['in', 'out']).default('out'),
+  counterparty: z.string().default(''),
+  description: z.string().nullish(),
+});
+const VisionResponseSchema = z.object({ transactions: z.array(VisionTxSchema) });
+
+const ALLOWED_IMAGE_MIME = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+
+const ImportImageBodySchema = z.object({
+  image_base64: z.string().min(1),
+  mime: z.string().default('image/jpeg'),
+});
+
+export const aiImportImageHandler: ApiHandler = async (req): Promise<ApiResponse> => {
+  const start = Date.now();
+  try {
+    const user = await resolveWebAppUser(req);
+    const parsed = ImportImageBodySchema.safeParse(req.body);
+    if (!parsed.success) return invalidRequest('Нужно поле image_base64');
+    const mime = ALLOWED_IMAGE_MIME.has(parsed.data.mime) ? parsed.data.mime : 'image/jpeg';
+
+    const year = new Date().getUTCFullYear();
+    const system = `Ты извлекаешь операции из СКРИНШОТА банковской выписки или истории карты. Верни СТРОГО валидный JSON.
+Для КАЖДОЙ операции: date (YYYY-MM-DD; если год не виден — ${year}), amount_rub (число в рублях, без знака и пробелов), direction ('out' — трата/перевод, 'in' — поступление), counterparty (кому/от кого — ФИО или название; если не видно — ""), description (назначение кратко).
+Игнорируй итоги, остаток, сводки кешбэка — только отдельные операции.
+Ответ ТОЛЬКО JSON: {"transactions":[{"date":"YYYY-MM-DD","amount_rub":0,"direction":"out","counterparty":"...","description":"..."}]}`;
+
+    const raw = await callClaude({
+      system,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: mime, data: parsed.data.image_base64 } },
+            { type: 'text', text: 'Извлеки все операции из этого скриншота.' },
+          ],
+        },
+      ],
+      expectJson: true,
+      maxTokens: 4096,
+      model: config.AI_MENTOR_MODEL,
+    });
+
+    const vision = VisionResponseSchema.safeParse(raw);
+    if (!vision.success) {
+      return { status: 200, body: { ok: false, error: 'Не удалось распознать операции на скриншоте' } };
+    }
+
+    const transactions = vision.data.transactions.map((t) => ({
+      date: t.date,
+      amount_rub: typeof t.amount_rub === 'string' ? Number(t.amount_rub.replace(/\s/g, '').replace(',', '.')) : t.amount_rub,
+      direction: t.direction,
+      counterparty: t.counterparty,
+      description: t.description ?? null,
+    })).filter((t) => Number.isFinite(t.amount_rub) && t.amount_rub > 0);
+
+    log.info(
+      { telegram_id: user.telegramId.toString(), handler: 'ai_import_image', extracted: transactions.length, latency_ms: Date.now() - start },
+      'ai_import_image_ok'
+    );
+    return { status: 200, body: { ok: true, transactions } };
+  } catch (err) {
+    if (err instanceof WebAppAuthError) return unauthorizedResponse(err.reason);
+    log.error({ err, handler: 'ai_import_image', latency_ms: Date.now() - start }, 'ai_import_image_error');
+    return { status: 200, body: { ok: false, error: 'Ошибка распознавания скриншота' } };
+  }
+};
+
+// ── POST /api/ai/import/confirm — занести распознанные операции ─────────────
+
+const ConfirmTxSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  amount_rub: z.union([z.number(), z.string()]),
+  direction: z.enum(['in', 'out']).default('out'),
+  counterparty: z.string().default(''),
+  description: z.string().nullish(),
+});
+const ConfirmBodySchema = z.object({
+  transactions: z.array(ConfirmTxSchema).min(1).max(200),
+  card: z.string().max(40).optional(), // метка карты (по умолчанию — Лилиана)
+});
+
+const CARD_PRESETS: Record<string, { code: string; name: string }> = {
+  lilia: { code: 'card_lilia', name: 'Карта Лилианы' },
+};
+
+export const aiImportConfirmHandler: ApiHandler = async (req): Promise<ApiResponse> => {
+  const start = Date.now();
+  try {
+    const user = await resolveWebAppUser(req);
+    const parsed = ConfirmBodySchema.safeParse(req.body);
+    if (!parsed.success) return invalidRequest('Нужен список transactions');
+
+    const preset = CARD_PRESETS[parsed.data.card ?? 'lilia'] ?? CARD_PRESETS['lilia']!;
+    const txs = parsed.data.transactions.map((t) => ({
+      date: t.date,
+      amountKop: toKopecks(t.amount_rub),
+      direction: t.direction,
+      counterparty: t.counterparty,
+      description: t.description ?? null,
+    }));
+
+    const result = await importCardTransactions(txs, preset.code, preset.name, user.telegramId);
+
+    log.info(
+      { telegram_id: user.telegramId.toString(), handler: 'ai_import_confirm', created: result.created, skipped: result.skipped, latency_ms: Date.now() - start },
+      'ai_import_confirm_ok'
+    );
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        created: result.created,
+        skipped: result.skipped,
+        payroll: result.payroll,
+        total: result.totalKop,
+      },
+    };
+  } catch (err) {
+    if (err instanceof WebAppAuthError) return unauthorizedResponse(err.reason);
+    log.error({ err, handler: 'ai_import_confirm', latency_ms: Date.now() - start }, 'ai_import_confirm_error');
+    return { status: 200, body: { ok: false, error: 'Не удалось занести операции' } };
   }
 };
 

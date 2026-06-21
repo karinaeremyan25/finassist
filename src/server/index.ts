@@ -25,7 +25,7 @@ import {
 } from './routes/pnl.js';
 import { employeesHandler, employeeTransactionsHandler } from './routes/employees.js';
 import { contractorsHandler, contractorsSyncHandler, invoiceGenerateHandler } from './routes/contractors.js';
-import { aiCommandsHandler, aiCommandApproveHandler, aiAssistantHandler, aiTranscribeHandler } from './routes/aiCommands.js';
+import { aiCommandsHandler, aiCommandApproveHandler, aiAssistantHandler, aiTranscribeHandler, aiImportImageHandler, aiImportConfirmHandler } from './routes/aiCommands.js';
 import { loansListHandler } from './routes/loans.js';
 
 export function buildRouter(): Router {
@@ -110,6 +110,9 @@ export function buildRouter(): Router {
   // ── AI-ассистент: наставник + оркестратор в одном (US-105) ────────────────
   router.post('/api/ai/assistant', aiAssistantHandler);
   router.post('/api/ai/transcribe', aiTranscribeHandler);
+  // Импорт операций по скриншоту физ-карты (карта Лилианы и др.)
+  router.post('/api/ai/import-image', aiImportImageHandler);
+  router.post('/api/ai/import/confirm', aiImportConfirmHandler);
   router.post('/api/ai/commands', aiCommandsHandler);
   router.post('/api/ai/commands/approve', aiCommandApproveHandler);
 

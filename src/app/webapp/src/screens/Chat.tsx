@@ -4,14 +4,39 @@
  * плюс голосовая диктовка. POST /api/ai/assistant → answer | action.
  */
 
-import { useRef, useState } from 'react';
+import { useRef, useState, type ChangeEvent } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { SendHorizontal, Sparkles, Trash2, Mic, Square, Check, X } from 'lucide-react';
+import { SendHorizontal, Sparkles, Trash2, Mic, Square, Check, X, ImagePlus } from 'lucide-react';
 import { Header } from '../components/Header';
 import { useApp, useFilters, type ChatMessage } from '../state/FilterContext';
 import { api, ApiClientError } from '../lib/api';
+import { rubles } from '../lib/money';
 import { openLink } from '../lib/telegram';
-import type { AiAssistantAction } from '../lib/types';
+import type { AiAssistantAction, ImportedTxItem } from '../lib/types';
+
+/** Загрузка картинки в <img> из File. */
+function loadImage(file: File): Promise<HTMLImageElement> {
+  return new Promise((res, rej) => {
+    const img = new Image();
+    img.onload = () => res(img);
+    img.onerror = rej;
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+/** Сжимает фото (JPEG, до 1500px) → base64 без префикса, чтобы влезть в лимит тела. */
+async function fileToCompressedBase64(file: File): Promise<{ base64: string; mime: string }> {
+  const img = await loadImage(file);
+  const scale = Math.min(1, 1500 / img.width);
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(img.width * scale);
+  canvas.height = Math.round(img.height * scale);
+  const ctx = canvas.getContext('2d');
+  if (ctx) ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+  URL.revokeObjectURL(img.src);
+  return { base64: dataUrl.split(',')[1] ?? '', mime: 'image/jpeg' };
+}
 
 const ERROR_HINTS: Record<string, string> = {
   off_topic: 'Я помогаю с финансами и аналитикой, а также создаю счета, считаю налог и переклассифицирую расходы.',
@@ -66,6 +91,60 @@ export function Chat() {
   const chunksRef = useRef<Blob[]>([]);
   const micAvailable =
     typeof navigator !== 'undefined' && !!navigator.mediaDevices && typeof MediaRecorder !== 'undefined';
+
+  // Импорт по скриншоту карты
+  const [pendingImport, setPendingImport] = useState<ImportedTxItem[] | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+
+  async function onPickImage(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setPending(null);
+    setPendingImport(null);
+    addChatMessage({ role: 'user', text: '📷 Скриншот выписки' });
+    setScanning(true);
+    try {
+      const { base64, mime } = await fileToCompressedBase64(file);
+      const res = await api.importImage(base64, mime);
+      if (res.ok && res.transactions && res.transactions.length > 0) {
+        setPendingImport(res.transactions);
+      } else {
+        addChatMessage({ role: 'error', text: res.error ?? 'Не удалось распознать операции на скриншоте.' });
+      }
+    } catch {
+      addChatMessage({ role: 'error', text: 'Не удалось обработать изображение.' });
+    } finally {
+      setScanning(false);
+    }
+  }
+
+  async function confirmImport(ok: boolean) {
+    if (!pendingImport) return;
+    if (!ok) {
+      setPendingImport(null);
+      addChatMessage({ role: 'assistant', text: 'Отменено.' });
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await api.importConfirm(pendingImport, 'lilia');
+      if (res.ok) {
+        addChatMessage({
+          role: 'assistant',
+          text: `✅ Занесено операций: ${res.created} (в ФОТ: ${res.payroll}). Пропущено дублей: ${res.skipped}. Сумма: ${rubles(res.total ?? 0)}.`,
+        });
+      } else {
+        addChatMessage({ role: 'error', text: res.error ?? 'Не удалось занести операции.' });
+      }
+    } catch {
+      addChatMessage({ role: 'error', text: 'Ошибка при занесении операций.' });
+    } finally {
+      setPendingImport(null);
+      setBusy(false);
+    }
+  }
 
   async function send() {
     const question = input.trim();
@@ -185,19 +264,37 @@ export function Chat() {
               <p className="text-[13px] leading-[18px] text-ink-muted">
                 Советы: «Какие расходы сократить?», «Почему июнь в минусе?»<br />
                 Команды: «Счёт на Гайнетдинову 25000», «Платёжка в ФНС на налог», «Перемести „коммунизм“ в ФОТ».<br />
-                Можно надиктовать голосом 🎤.
+                Голосом 🎤 или пришли 📷 скриншот выписки карты — распознаю и занесу операции.
               </p>
             </div>
           ) : (
             chatMessages.map((m) => <Bubble key={m.id} msg={m} />)
           )}
           {pending ? <ActionCard action={pending} busy={busy} onDecide={decide} /> : null}
-          {busy && !pending ? <div className="text-[13px] text-ink-faint">AI печатает…</div> : null}
+          {pendingImport ? <ImportCard txs={pendingImport} busy={busy} onDecide={confirmImport} /> : null}
+          {busy && !pending && !pendingImport ? <div className="text-[13px] text-ink-faint">AI печатает…</div> : null}
           {transcribing ? <div className="text-[13px] text-ink-faint">Распознаю речь…</div> : null}
+          {scanning ? <div className="text-[13px] text-ink-faint">Распознаю скриншот…</div> : null}
         </div>
 
         <div className="safe-bottom sticky bottom-0 bg-bg-deep pt-2 pb-[calc(72px+env(safe-area-inset-bottom,0px))]">
           <div className="flex items-end gap-2">
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => void onPickImage(e)}
+            />
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              disabled={busy || scanning}
+              aria-label="Прикрепить скриншот выписки"
+              className="flex h-11 w-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-md bg-surface-2 text-ink active:opacity-90 disabled:opacity-50"
+            >
+              <ImagePlus size={20} strokeWidth={2} />
+            </button>
             {micAvailable ? (
               <button
                 type="button"
@@ -264,6 +361,68 @@ function ActionCard({
         >
           <Check size={18} strokeWidth={2.5} />
           Выполнить
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => onDecide(false)}
+          className="inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-pill border border-border-strong px-5 text-[14px] text-ink-muted active:bg-surface-3 disabled:opacity-60"
+        >
+          <X size={18} strokeWidth={2.5} />
+          Отмена
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ImportCard({
+  txs,
+  busy,
+  onDecide,
+}: {
+  txs: ImportedTxItem[];
+  busy: boolean;
+  onDecide: (ok: boolean) => void;
+}) {
+  const totalOut = txs.reduce((s, t) => s + (t.direction === 'out' ? t.amount_rub : 0), 0);
+  return (
+    <div className="rounded-md bg-surface-2 p-4">
+      <p className="text-[11px] font-medium uppercase tracking-[0.04em] text-ink-faint">
+        Распознано со скриншота · {txs.length} операц.
+      </p>
+      <ul className="mt-2 max-h-64 divide-y divide-border overflow-y-auto">
+        {txs.map((t, i) => (
+          <li key={i} className="flex items-baseline justify-between gap-3 py-2">
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[13px] text-ink">
+                {t.counterparty || t.description || 'Операция'}
+              </span>
+              <span className="num block text-[11px] text-ink-faint">
+                {t.date}
+                {t.direction === 'in' ? ' · поступление' : ''}
+              </span>
+            </span>
+            <span
+              className="num shrink-0 text-[13px] font-semibold"
+              style={{ color: t.direction === 'out' ? 'var(--expense)' : 'var(--income)' }}
+            >
+              {t.direction === 'out' ? '−' : '+'}
+              {rubles(Math.round(t.amount_rub * 100))}
+            </span>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-2 text-[12px] text-ink-muted">Итого трат: {rubles(Math.round(totalOut * 100))}</p>
+      <div className="mt-3 flex gap-2">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => onDecide(true)}
+          className="inline-flex min-h-[44px] flex-1 items-center justify-center gap-1.5 rounded-pill bg-accent text-[14px] font-semibold text-accent-ink shadow-glow active:opacity-90 disabled:opacity-60"
+        >
+          <Check size={18} strokeWidth={2.5} />
+          Занести
         </button>
         <button
           type="button"

@@ -432,6 +432,28 @@ export interface TranscribeResponse {
   error?: string;
 }
 
+// Импорт операций со скриншота карты (карта Лилианы и др.)
+export interface ImportedTxItem {
+  date: string;
+  amount_rub: number;
+  direction: 'in' | 'out';
+  counterparty: string;
+  description: string | null;
+}
+export interface ImportImageResponse {
+  ok: boolean;
+  transactions?: ImportedTxItem[];
+  error?: string;
+}
+export interface ImportConfirmResponse {
+  ok: boolean;
+  created?: number;
+  skipped?: number;
+  payroll?: number;
+  total?: number; // копейки
+  error?: string;
+}
+
 // ── Деньги в пути (/api/analytics/pnl/in-transit) — US-104 ───────────────────
 
 export interface InTransitResponse {

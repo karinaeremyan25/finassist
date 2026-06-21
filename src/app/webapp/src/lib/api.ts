@@ -19,6 +19,9 @@ import type {
   EmployeeTransactionsResponse,
   EmployeesResponse,
   FundsResponse,
+  ImportConfirmResponse,
+  ImportImageResponse,
+  ImportedTxItem,
   InsightsResponse,
   InTransitResponse,
   InvoiceGenerateResponse,
@@ -288,6 +291,22 @@ export const api = {
     return request<TranscribeResponse>('/api/ai/transcribe', {
       method: 'POST',
       body: JSON.stringify({ audio_base64: audioBase64, mime }),
+    });
+  },
+
+  /** Распознать операции со скриншота карты (Vision). */
+  importImage(imageBase64: string, mime: string): Promise<ImportImageResponse> {
+    return request<ImportImageResponse>('/api/ai/import-image', {
+      method: 'POST',
+      body: JSON.stringify({ image_base64: imageBase64, mime }),
+    });
+  },
+
+  /** Занести распознанные операции (после проверки). */
+  importConfirm(transactions: ImportedTxItem[], card = 'lilia'): Promise<ImportConfirmResponse> {
+    return request<ImportConfirmResponse>('/api/ai/import/confirm', {
+      method: 'POST',
+      body: JSON.stringify({ transactions, card }),
     });
   },
 
