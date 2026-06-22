@@ -38,6 +38,38 @@ async function fileToCompressedBase64(file: File): Promise<{ base64: string; mim
   return { base64: dataUrl.split(',')[1] ?? '', mime: 'image/jpeg' };
 }
 
+/** Минимальный тип браузерного распознавания речи (Web Speech API). */
+interface SpeechRec {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  onresult: ((e: unknown) => void) | null;
+  onerror: ((e: unknown) => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+}
+/** Конструктор SpeechRecognition, если браузер его поддерживает (без ключей). */
+function getSpeechRecognitionCtor(): (new () => SpeechRec) | null {
+  if (typeof window === 'undefined') return null;
+  const w = window as unknown as {
+    SpeechRecognition?: new () => SpeechRec;
+    webkitSpeechRecognition?: new () => SpeechRec;
+  };
+  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
+}
+/** Достаёт финальный текст из события распознавания. */
+function transcriptFromEvent(e: unknown): string {
+  const ev = e as { results?: ArrayLike<ArrayLike<{ transcript?: string }>> };
+  let text = '';
+  const results = ev.results;
+  if (!results) return '';
+  for (let i = 0; i < results.length; i++) {
+    text += results[i]?.[0]?.transcript ?? '';
+  }
+  return text.trim();
+}
+
 const ERROR_HINTS: Record<string, string> = {
   off_topic: 'Я помогаю с финансами и аналитикой, а также создаю счета, считаю налог и переклассифицирую расходы.',
   insufficient_data: 'Недостаточно данных за выбранный период. Попробуйте расширить период.',
@@ -89,8 +121,11 @@ export function Chat() {
   const [transcribing, setTranscribing] = useState(false);
   const mediaRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const speechRef = useRef<SpeechRec | null>(null);
+  const hasBrowserSpeech = getSpeechRecognitionCtor() !== null;
   const micAvailable =
-    typeof navigator !== 'undefined' && !!navigator.mediaDevices && typeof MediaRecorder !== 'undefined';
+    hasBrowserSpeech ||
+    (typeof navigator !== 'undefined' && !!navigator.mediaDevices && typeof MediaRecorder !== 'undefined');
 
   // Импорт по скриншоту карты
   const [pendingImport, setPendingImport] = useState<ImportedTxItem[] | null>(null);
@@ -207,9 +242,38 @@ export function Chat() {
 
   async function toggleRec() {
     if (recording) {
+      speechRef.current?.stop();
       mediaRef.current?.stop();
       return;
     }
+
+    // 1. Браузерное распознавание (Web Speech API) — бесплатно, без ключей.
+    const Ctor = getSpeechRecognitionCtor();
+    if (Ctor !== null) {
+      try {
+        const rec = new Ctor();
+        rec.lang = 'ru-RU';
+        rec.continuous = false;
+        rec.interimResults = false;
+        rec.onresult = (e: unknown) => {
+          const text = transcriptFromEvent(e);
+          if (text) setInput((cur) => (cur ? `${cur} ${text}` : text));
+        };
+        rec.onerror = () => {
+          setRecording(false);
+          addChatMessage({ role: 'error', text: 'Не удалось распознать речь. Разрешите доступ к микрофону или продиктуйте ещё раз.' });
+        };
+        rec.onend = () => setRecording(false);
+        speechRef.current = rec;
+        rec.start();
+        setRecording(true);
+        return;
+      } catch {
+        // не получилось — пробуем Deepgram-путь ниже
+      }
+    }
+
+    // 2. Фолбэк: запись + Deepgram (нужен DEEPGRAM_API_KEY на сервере).
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mr = new MediaRecorder(stream);
