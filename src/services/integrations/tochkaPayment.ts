@@ -41,9 +41,17 @@ export interface CreatePaymentResult {
   noPaymentsScope?: boolean; // true, если у токена нет права payments
 }
 
-/** Назначение платежа: убрать запрещённое тире «—», обрезать до 210 символов. */
+/**
+ * Назначение платежа: убрать запрещённое тире «—», добавить НДС-оговорку (Точка
+ * требует указывать НДС), обрезать до 210 символов. По умолчанию «Без НДС» —
+ * у ИП/ООО на АУСН/УСН НДС нет (если в тексте уже есть «НДС», не трогаем).
+ */
 function sanitizePurpose(p: string): string {
-  return p.replace(/—/g, '-').replace(/\s+/g, ' ').trim().slice(0, 210);
+  let s = p.replace(/—/g, '-').replace(/\s+/g, ' ').trim();
+  if (!/ндс/i.test(s)) {
+    s = `${s.replace(/[.\s]+$/, '')}. Без НДС.`;
+  }
+  return s.slice(0, 210);
 }
 
 export async function createPaymentForSign(input: CreatePaymentInput): Promise<CreatePaymentResult> {
