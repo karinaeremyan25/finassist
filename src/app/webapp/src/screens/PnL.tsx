@@ -268,7 +268,7 @@ function MonthView({ entity, month }: { entity: PnlEntity; month: string }) {
     <div className="flex flex-col gap-6">
       <KpiGrid data={data} />
       {entity === 'total' ? <EntityProfitSummary month={month} /> : null}
-      <IncomeBlock data={data} />
+      <IncomeBlock data={data} entity={entity} period={month} />
       <ExpenseBlock data={data} />
       <NetProfitBlock data={data} />
       <PersonalBlock
@@ -396,7 +396,15 @@ function LineRow({
   );
 }
 
-function IncomeBlock({ data }: { data: PnlResponse }) {
+const SOURCE_LABELS: Record<string, string> = {
+  prodamus: 'Продамус',
+  lava: 'Lava.top',
+  tochka: 'Точка (напрямую)',
+  robokassa: 'Робокасса',
+};
+
+function IncomeBlock({ data, entity, period }: { data: PnlResponse; entity: PnlEntity; period: string }) {
+  const [showBreakdown, setShowBreakdown] = useState(false);
   const rows = INCOME_SOURCE_LABELS.map((s) => ({
     label: s.label,
     amount: data.income.sources[s.key],
@@ -423,7 +431,62 @@ function IncomeBlock({ data }: { data: PnlResponse }) {
             {rubles(data.income.total)}
           </span>
         </div>
+        {data.income.total > 0 ? (
+          <button
+            type="button"
+            onClick={() => {
+              hapticSelection();
+              setShowBreakdown((v) => !v);
+            }}
+            className="w-full border-t border-border py-2.5 text-left text-[13px] text-accent"
+          >
+            {showBreakdown ? 'Скрыть состав' : 'Из чего сложилась сумма →'}
+          </button>
+        ) : null}
       </div>
+      {showBreakdown ? <IncomeBreakdown entity={entity} period={period} /> : null}
+    </div>
+  );
+}
+
+/** Раскрытие дохода: продажи по источникам. */
+function IncomeBreakdown({ entity, period }: { entity: PnlEntity; period: string }) {
+  const bd = useAsync(() => api.incomeBreakdown(entity, period), [entity, period]);
+  if (bd.status === 'loading') return <Skeleton className="mt-2 h-24 w-full rounded-md" />;
+  if (bd.status === 'error') return <ErrorState message={bd.error ?? undefined} onRetry={bd.reload} />;
+  if (!bd.data || bd.data.sources.length === 0)
+    return <p className="mt-2 text-[13px] text-ink-faint">Нет продаж за период.</p>;
+  return (
+    <div className="mt-2 flex flex-col gap-2">
+      {bd.data.sources.map((s) => (
+        <div key={s.source} className="rounded-md bg-surface-1 px-4 py-2">
+          <div className="flex items-baseline justify-between border-b border-border py-1.5">
+            <span className="text-[13px] font-semibold text-ink">{SOURCE_LABELS[s.source] ?? s.source}</span>
+            <span className="num text-[13px] font-semibold" style={{ color: 'var(--income)' }}>
+              {rubles(s.total)} · {s.items.length} шт
+            </span>
+          </div>
+          <ul className="divide-y divide-border">
+            {s.items.slice(0, 50).map((i) => (
+              <li key={i.id} className="flex items-baseline justify-between gap-3 py-1.5">
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[12px] text-ink">
+                    {i.counterparty ?? i.description ?? 'Продажа'}
+                  </span>
+                  <span className="num block text-[10px] text-ink-faint">
+                    {i.date.slice(0, 10)}
+                    {i.tx_status === 'pending' ? ' · в пути' : ''}
+                  </span>
+                </span>
+                <span className="num shrink-0 text-[12px] text-ink">{rubles(i.amount)}</span>
+              </li>
+            ))}
+          </ul>
+          {s.items.length > 50 ? (
+            <p className="py-1 text-[11px] text-ink-faint">…и ещё {s.items.length - 50}</p>
+          ) : null}
+        </div>
+      ))}
     </div>
   );
 }

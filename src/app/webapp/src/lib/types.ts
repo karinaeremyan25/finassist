@@ -258,6 +258,24 @@ export interface PersonalSpendingResponse {
   categories: PersonalSpendingCategory[];
 }
 
+// Раскрытие дохода (из чего сложилась сумма)
+export interface IncomeBreakdownItem {
+  id: string;
+  date: string;
+  amount: number;
+  counterparty: string | null;
+  description: string | null;
+  tx_status: string;
+}
+export interface IncomeBreakdownSource {
+  source: string;
+  total: number;
+  items: IncomeBreakdownItem[];
+}
+export interface IncomeBreakdownResponse {
+  sources: IncomeBreakdownSource[];
+}
+
 export interface SetTxCategoryResponse {
   id: string;
   category: string;

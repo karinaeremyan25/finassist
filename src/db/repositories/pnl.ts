@@ -243,6 +243,76 @@ export async function getPnlForPeriod(
   };
 }
 
+// ── getIncomeBreakdown (раскрытие дохода: из чего сложилась сумма) ─────────
+
+export interface IncomeBreakdownItem {
+  id: string;
+  occurredAt: string;
+  amount: bigint;
+  counterparty: string | null;
+  description: string | null;
+  txStatus: string;
+}
+export interface IncomeBreakdownSource {
+  sourceCode: string;
+  total: bigint;
+  items: IncomeBreakdownItem[];
+}
+
+/**
+ * Доходные операции за месяц, сгруппированные по источнику (prodamus/lava/tochka).
+ * Займы исключены (как и в доходе). Для «раскрытия» суммы дохода на экране P&L.
+ */
+export async function getIncomeBreakdown(
+  period: string,
+  entityIds: string[] | null
+): Promise<IncomeBreakdownSource[]> {
+  const { dateFrom, dateTo } = monthBoundaries(period);
+  const entityFilter = entityIds !== null ? sql`AND t.entity_id = ANY(${entityIds})` : sql``;
+
+  const rows = await sql<{
+    source_code: string;
+    id: string;
+    occurred_at: string;
+    amount: bigint;
+    counterparty: string | null;
+    description: string | null;
+    tx_status: string;
+  }[]>`
+    SELECT s.code AS source_code, t.id, t.occurred_at::text AS occurred_at,
+           t.amount_rub AS amount, t.counterparty, t.description, t.tx_status
+    FROM transactions t
+    JOIN sources s ON s.id = t.source_id
+    WHERE t.deleted_at IS NULL
+      AND t.flow_type = 'income'
+      AND (t.pnl_category IS DISTINCT FROM 'loan')
+      AND t.occurred_at >= ${dateFrom}
+      AND t.occurred_at < ${dateTo}
+      ${entityFilter}
+    ORDER BY t.occurred_at DESC
+    LIMIT 1000
+  `;
+
+  const bySource = new Map<string, IncomeBreakdownSource>();
+  for (const r of rows) {
+    let g = bySource.get(r.source_code);
+    if (g === undefined) {
+      g = { sourceCode: r.source_code, total: 0n, items: [] };
+      bySource.set(r.source_code, g);
+    }
+    g.total += r.amount;
+    g.items.push({
+      id: r.id,
+      occurredAt: r.occurred_at,
+      amount: r.amount,
+      counterparty: r.counterparty,
+      description: r.description,
+      txStatus: r.tx_status,
+    });
+  }
+  return Array.from(bySource.values()).sort((a, b) => (a.total < b.total ? 1 : -1));
+}
+
 // ── getInTransitTotals (US-104: деньги в пути) ────────────────────────────
 
 export interface InTransitTotals {

@@ -21,6 +21,7 @@ import {
   getYearPnl,
   getPersonalSpending,
   getInTransitTotals,
+  getIncomeBreakdown,
   updateTxCategory,
   prevMonth,
   monthBoundaries,
@@ -426,11 +427,9 @@ export const pnlInTransitHandler: ApiHandler = async (req): Promise<ApiResponse>
 
     const t = await getInTransitTotals(period, entityIds);
 
-    // Налог считается по НЕТТО (real income без денег в пути), минус комиссии.
-    const pnl = await getPnlForPeriod(period, entityIds);
-    const taxBaseRaw = t.income.real - pnl.expensesBreakdown.payment_commission;
-    const taxBase = taxBaseRaw < 0n ? 0n : taxBaseRaw;
-    const tax = BigInt(Math.round(Number(taxBase) * 0.08));
+    // АУСН «доходы» 8%: налог с ВАЛОВЫХ продаж (полная сумма на Продамус/Lava),
+    // ВКЛЮЧАЯ «в пути» (продажа уже состоялась), БЕЗ вычета комиссии.
+    const tax = BigInt(Math.round(Number(t.income.total) * 0.08));
 
     log.info(
       { telegram_id: user.telegramId.toString(), handler: 'pnl_in_transit', entity, period, latency_ms: Date.now() - start },
@@ -460,6 +459,47 @@ export const pnlInTransitHandler: ApiHandler = async (req): Promise<ApiResponse>
         tax_net: 0,
       },
     };
+  }
+};
+
+// ── GET /api/analytics/income-breakdown — раскрытие дохода ─────────────────
+
+export const incomeBreakdownHandler: ApiHandler = async (req): Promise<ApiResponse> => {
+  const start = Date.now();
+  try {
+    const user = await resolveWebAppUser(req);
+    const parsed = PnlQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return invalidRequest(parsed.error.errors[0]?.message ?? 'Параметры entity и period обязательны');
+    }
+    const { entity, period } = parsed.data;
+    const sources = await getIncomeBreakdown(period, resolveEntityIds(entity));
+
+    log.info(
+      { telegram_id: user.telegramId.toString(), handler: 'income_breakdown', entity, period, latency_ms: Date.now() - start },
+      'income_breakdown_ok'
+    );
+    return {
+      status: 200,
+      body: {
+        sources: sources.map((s) => ({
+          source: s.sourceCode,
+          total: s.total,
+          items: s.items.map((i) => ({
+            id: i.id,
+            date: i.occurredAt,
+            amount: i.amount,
+            counterparty: i.counterparty,
+            description: i.description,
+            tx_status: i.txStatus,
+          })),
+        })),
+      },
+    };
+  } catch (err) {
+    if (err instanceof WebAppAuthError) return unauthorizedResponse(err.reason);
+    log.error({ err, handler: 'income_breakdown', latency_ms: Date.now() - start }, 'income_breakdown_error');
+    return { status: 200, body: { sources: [] } };
   }
 };
 

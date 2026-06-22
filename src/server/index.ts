@@ -21,6 +21,7 @@ import {
   pnlYearHandler,
   personalSpendingHandler,
   pnlInTransitHandler,
+  incomeBreakdownHandler,
   updateTxCategoryHandler,
 } from './routes/pnl.js';
 import { employeesHandler, employeeTransactionsHandler, employeesAnalyticsHandler, employeesExportHandler } from './routes/employees.js';
@@ -88,6 +89,7 @@ export function buildRouter(): Router {
   router.get('/api/analytics/personal-spending', personalSpendingHandler);
   // Деньги в пути (US-104): доход/расход с выделением pending + налог по нетто
   router.get('/api/analytics/pnl/in-transit', pnlInTransitHandler);
+  router.get('/api/analytics/income-breakdown', incomeBreakdownHandler);
   // PATCH без :param — id передаётся в теле запроса (Router делает exact match)
   router.add('PATCH', '/api/analytics/transactions/category', updateTxCategoryHandler);
 

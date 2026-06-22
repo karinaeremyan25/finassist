@@ -8,11 +8,28 @@ import { useState } from 'react';
 import { ChevronDown, ChevronRight, Plus, RefreshCw } from 'lucide-react';
 import { SubHeader } from '../components/SubHeader';
 import { Skeleton, ErrorState, EmptyState } from '../components/States';
+import { TransactionDetail } from '../components/TransactionDetail';
 import { useAsync } from '../lib/useAsync';
 import { api } from '../lib/api';
 import { rubles, rublesSigned } from '../lib/money';
 import { hapticSelection } from '../lib/telegram';
-import type { Company, ContractorRow, InvoiceStatus } from '../lib/types';
+import type { Company, ContractorRow, ContractorPayment, InvoiceStatus, TransactionItem } from '../lib/types';
+
+/** Платёж контрагента → TransactionItem для общего модала-«чек». */
+function paymentToTxItem(name: string, p: ContractorPayment): TransactionItem {
+  return {
+    id: p.id,
+    date: p.date,
+    description: p.description ?? '',
+    amount: p.amount,
+    direction: null,
+    category: '',
+    counterparty: name,
+    pnlCategory: null,
+    isPersonal: false,
+    needsReview: false,
+  };
+}
 
 const FILTERS: Array<{ key: Company; label: string }> = [
   { key: 'ooo', label: 'ООО' },
@@ -113,6 +130,7 @@ export function Contractors() {
 
 function ContractorCard({ c, onChange }: { c: ContractorRow; onChange: () => void }) {
   const [open, setOpen] = useState(false);
+  const [detail, setDetail] = useState<TransactionItem | null>(null);
   const owed = c.balance_owed;
   return (
     <li className="overflow-hidden rounded-md bg-surface-2">
@@ -170,20 +188,29 @@ function ContractorCard({ c, onChange }: { c: ContractorRow; onChange: () => voi
           {c.payments.length > 0 ? (
             <ul className="divide-y divide-border">
               {c.payments.map((p) => (
-                <li key={p.id} className="flex items-baseline justify-between gap-3 py-2">
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[13px] text-ink">{p.description ?? 'Платёж'}</span>
-                    <span className="num block text-[11px] text-ink-faint">
-                      {p.date.slice(0, 10)}
-                      {p.tochka_transaction_id ? ' · чек Точки' : ''}
-                    </span>
-                  </span>
-                  <span
-                    className="num shrink-0 text-[13px] font-semibold"
-                    style={{ color: p.amount < 0 ? 'var(--expense)' : 'var(--income)' }}
+                <li key={p.id}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      hapticSelection();
+                      setDetail(paymentToTxItem(c.name, p));
+                    }}
+                    className="flex w-full items-baseline justify-between gap-3 py-2 text-left active:opacity-70"
                   >
-                    {rublesSigned(p.amount)}
-                  </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13px] text-ink">{p.description ?? 'Платёж'}</span>
+                      <span className="num block text-[11px] text-ink-faint">
+                        {p.date.slice(0, 10)}
+                        {p.tochka_transaction_id ? ' · чек Точки' : ''}
+                      </span>
+                    </span>
+                    <span
+                      className="num shrink-0 text-[13px] font-semibold"
+                      style={{ color: p.amount < 0 ? 'var(--expense)' : 'var(--income)' }}
+                    >
+                      {rublesSigned(p.amount)}
+                    </span>
+                  </button>
                 </li>
               ))}
             </ul>
@@ -197,6 +224,9 @@ function ContractorCard({ c, onChange }: { c: ContractorRow; onChange: () => voi
             <p className="mt-3 text-[12px] text-ink-faint">Счета доступны только для ООО.</p>
           )}
         </div>
+      ) : null}
+      {detail ? (
+        <TransactionDetail tx={detail} onClose={() => setDetail(null)} onChanged={onChange} />
       ) : null}
     </li>
   );

@@ -23,6 +23,7 @@ import type {
   ImportConfirmResponse,
   ImportImageResponse,
   ImportedTxItem,
+  IncomeBreakdownResponse,
   InsightsResponse,
   InTransitResponse,
   InvoiceGenerateResponse,
@@ -167,6 +168,12 @@ export const api = {
   pnlYear(entity: PnlEntity, year: number): Promise<PnlYearResponse> {
     const q = new URLSearchParams({ entity, year: String(year) }).toString();
     return request<PnlYearResponse>(`/api/analytics/pnl/year?${q}`);
+  },
+
+  /** Раскрытие дохода: из чего сложилась сумма (по источникам и продажам). */
+  incomeBreakdown(entity: PnlEntity, period: string): Promise<IncomeBreakdownResponse> {
+    const q = new URLSearchParams({ entity, period }).toString();
+    return request<IncomeBreakdownResponse>(`/api/analytics/income-breakdown?${q}`);
   },
 
   /** Личные траты собственника за месяц (YYYY-MM). */

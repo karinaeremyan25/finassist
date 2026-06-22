@@ -530,38 +530,30 @@ async function executeIntent(intent: ParsedIntent, userId: string, telegramId: b
   if (intent.type === 'create_payment') {
     const { date, number } = todayMskParts();
 
-    // (А) НАЛОГ: считаем по нетто и формируем платёжку на ЕНП/ФНС.
+    // (А) НАЛОГ: АУСН «доходы» 8% с ВАЛОВЫХ продаж (полная сумма на Продамус/Lava,
+    // включая «в пути»), БЕЗ вычета комиссии. Считаем по ИП и ООО отдельно.
     if (intent.is_tax) {
       const period = currentMonthMsk();
-      const pnl = await getPnlForPeriod(period, [ENTITY_IDS.ip]);
-      const base = pnl.incomeTotal - pnl.expensesBreakdown.payment_commission;
-      const taxBase = base < 0n ? 0n : base;
-      const tax = BigInt(Math.round(Number(taxBase) * 0.08));
+      const ipPnl = await getPnlForPeriod(period, [ENTITY_IDS.ip]);
+      const oooPnl = await getPnlForPeriod(period, [ENTITY_IDS.ooo]);
+      const ipTax = BigInt(Math.round(Number(ipPnl.incomeTotal) * 0.08));
+      const oooTax = BigInt(Math.round(Number(oooPnl.incomeTotal) * 0.08));
+      const totalTax = ipTax + oooTax;
 
-      const pdf = await generatePaymentOrderPdf({
-        number, date,
-        payerName: 'ИП Карина Еремян',
-        payerInn: null,
-        payeeName: 'Казначейство России (ФНС России) — ЕНП',
-        payeeInn: null,
-        payeeAccount: null,
-        payeeBic: null,
-        amountKopecks: tax,
-        purpose: `Налог Авто-УСН за ${period} (доход ${rubles(pnl.incomeTotal)} − комиссии ${rubles(pnl.expensesBreakdown.payment_commission)}) × 8%`,
-      });
-      const sent = await sendDocumentToChat(
-        telegramId, `nalog_${period}.pdf`, pdf, 'application/pdf',
-        `Платёжка по налогу (черновик): ${rubles(tax)}. Проверьте реквизиты ЕНП перед оплатой.`
-      );
       return {
         ok: true,
         payload: {
           period,
-          tax_amount_formatted: rubles(tax),
-          pdf_sent: sent,
-          note: sent
-            ? 'PDF платёжки по налогу отправлен в чат (черновик, нетто × 8%). Реквизиты ЕНП/ИНН проверьте перед оплатой.'
-            : 'Налог посчитан, но не удалось отправить PDF в чат.',
+          ip_income: Number(ipPnl.incomeTotal),
+          ip_tax: Number(ipTax),
+          ooo_income: Number(oooPnl.incomeTotal),
+          ooo_tax: Number(oooTax),
+          total_tax: Number(totalTax),
+          note:
+            `Налог АУСН 8% с валовых продаж за ${period} (включая «в пути», без вычета комиссии):\n` +
+            `• ИП: ${rubles(ipTax)} (доход ${rubles(ipPnl.incomeTotal)})\n` +
+            `• ООО: ${rubles(oooTax)} (доход ${rubles(oooPnl.incomeTotal)})\n` +
+            `Итого: ${rubles(totalTax)}. Платёж проведём через Точку — как подключим оплату из приложения. Срок АУСН — до 25 числа следующего месяца.`,
         },
       };
     }
