@@ -48,6 +48,26 @@ interface AppContextValue extends FilterState {
 
 const AppContext = createContext<AppContextValue | null>(null);
 
+// Сохранение истории чата между сессиями (localStorage переживает закрытие
+// мини-аппа). Храним последние 100 сообщений.
+const CHAT_KEY = 'finassist_chat_v1';
+const CHAT_MAX = 100;
+
+function loadStoredChat(): ChatMessage[] {
+  try {
+    const raw = localStorage.getItem(CHAT_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw) as unknown;
+    if (!Array.isArray(arr)) return [];
+    return arr.filter(
+      (m): m is ChatMessage =>
+        m !== null && typeof m === 'object' && typeof (m as ChatMessage).text === 'string'
+    );
+  } catch {
+    return [];
+  }
+}
+
 const FALLBACK_PERIOD: Period = (() => {
   const d = new Date();
   const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -64,13 +84,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [directionId, setDirectionId] = useState<string | null>(null);
   const [period, setPeriodState] = useState<Period>(FALLBACK_PERIOD);
 
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
-  const chatNextId = useRef(1);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() => loadStoredChat());
+  const chatNextId = useRef(
+    chatMessages.reduce((max, m) => Math.max(max, m.id), 0) + 1
+  );
 
   const addChatMessage = useCallback((msg: Omit<ChatMessage, 'id'>) => {
     setChatMessages((prev) => [...prev, { ...msg, id: chatNextId.current++ }]);
   }, []);
-  const clearChat = useCallback(() => setChatMessages([]), []);
+  const clearChat = useCallback(() => {
+    setChatMessages([]);
+    try { localStorage.removeItem(CHAT_KEY); } catch { /* ignore */ }
+  }, []);
+
+  // Сохраняем историю чата при каждом изменении (последние CHAT_MAX).
+  useEffect(() => {
+    try {
+      localStorage.setItem(CHAT_KEY, JSON.stringify(chatMessages.slice(-CHAT_MAX)));
+    } catch { /* ignore (приватный режим/нет места) */ }
+  }, [chatMessages]);
 
   const loadSession = useCallback(async () => {
     setSessionLoading(true);
