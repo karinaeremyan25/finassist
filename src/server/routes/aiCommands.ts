@@ -21,6 +21,7 @@ import { logCommand, getCommand, finalizeCommand } from '../../db/repositories/a
 import { findContractorByName, createContractor, findPayeeByName } from '../../db/repositories/contractors.js';
 import { createInvoice } from '../../db/repositories/invoices.js';
 import { generatePaymentOrderPdf } from '../../services/paymentOrder.js';
+import { createPaymentForSign } from '../../services/integrations/tochkaPayment.js';
 import { sendDocumentToChat } from '../../services/telegramDoc.js';
 import { upsertRule } from '../../db/repositories/categoryRules.js';
 import { getPnlForPeriod, ENTITY_IDS, VALID_PNL_CATEGORIES } from '../../db/repositories/pnl.js';
@@ -558,45 +559,73 @@ async function executeIntent(intent: ParsedIntent, userId: string, telegramId: b
       };
     }
 
-    // (Б) ОПЛАТА ПОЛУЧАТЕЛЮ: достаём реквизиты из базы, формируем платёжку.
+    // (Б) ОПЛАТА ПОЛУЧАТЕЛЮ: реквизиты из базы.
     if (!intent.contractor_name || intent.amount_rub == null) {
       return { ok: false, payload: { note: 'Не хватает получателя или суммы платёжки' } };
     }
     const amount = toKopecks(intent.amount_rub);
     const payee = await findPayeeByName(intent.contractor_name);
     const payeeName = payee?.name ?? intent.contractor_name;
+    const purpose = intent.description ?? 'Оплата';
 
+    // 1) Если есть р/с и БИК — создаём платёж В ТОЧКЕ «на подпись» (деньги не
+    //    спишутся, пока Карина не подпишет в банке).
+    if (payee?.bankAccount && payee.bik) {
+      const m = new Date(Date.now() + 3 * 60 * 60 * 1000);
+      const p2 = (n: number): string => String(n).padStart(2, '0');
+      const ymd = `${m.getUTCFullYear()}-${p2(m.getUTCMonth() + 1)}-${p2(m.getUTCDate())}`;
+      const payNum = Number(`${p2(m.getUTCDate())}${p2(m.getUTCHours())}${p2(m.getUTCMinutes())}`);
+      const pay = await createPaymentForSign({
+        payer: 'ip',
+        counterpartyAccountNumber: payee.bankAccount.replace(/\D/g, '').slice(0, 20),
+        counterpartyBankBic: payee.bik.replace(/\D/g, '').slice(0, 9),
+        counterpartyInn: payee.inn,
+        counterpartyName: payeeName,
+        amountRub: Number(amount) / 100,
+        purpose,
+        paymentNumber: payNum,
+        paymentDate: ymd,
+      });
+      if (pay.ok) {
+        return {
+          ok: true,
+          payload: {
+            payee: payeeName,
+            amount: Number(amount),
+            tochka_payment: true,
+            redirect_url: pay.redirectUrl ?? null,
+            note: `✅ Платёж на ${rubles(amount)} для «${payeeName}» создан в Точке и ждёт твоей подписи. Открой Точку → «На подпись» → подтверди — тогда спишется.${pay.redirectUrl ? ` [Открыть для подписи](${pay.redirectUrl})` : ''}`,
+          },
+        };
+      }
+      // Не удалось через Точку → откат на PDF с понятной причиной.
+      const reason = pay.noPaymentsScope
+        ? 'У токена Точки нет права «Платежи» — перевыпусти токен с этим правом. Пока прислал PDF-черновик.'
+        : `Не удалось создать платёж в Точке (${pay.error}). Прислал PDF-черновик.`;
+      const pdf = await generatePaymentOrderPdf({
+        number, date, payerName: 'ИП Карина Еремян', payerInn: null,
+        payeeName, payeeInn: payee.inn, payeeAccount: payee.bankAccount, payeeBic: payee.bik,
+        amountKopecks: amount, purpose,
+      });
+      const sent = await sendDocumentToChat(telegramId, `platezhka_${number}.pdf`, pdf, 'application/pdf', `Платёжка (черновик) для «${payeeName}» на ${rubles(amount)}.`);
+      return { ok: true, payload: { payee: payeeName, amount: Number(amount), pdf_sent: sent, note: reason } };
+    }
+
+    // 2) Реквизитов нет → PDF-черновик + просьба заполнить р/с/БИК.
     const pdf = await generatePaymentOrderPdf({
-      number, date,
-      payerName: 'ИП Карина Еремян',
-      payerInn: null,
-      payeeName,
-      payeeInn: payee?.inn ?? null,
-      payeeAccount: payee?.bankAccount ?? null,
-      payeeBic: payee?.bik ?? null,
-      amountKopecks: amount,
-      purpose: intent.description ?? 'Оплата',
+      number, date, payerName: 'ИП Карина Еремян', payerInn: null,
+      payeeName, payeeInn: payee?.inn ?? null, payeeAccount: null, payeeBic: null,
+      amountKopecks: amount, purpose,
     });
-    const sent = await sendDocumentToChat(
-      telegramId, `platezhka_${number}.pdf`, pdf, 'application/pdf',
-      `Платёжка (черновик) для «${payeeName}» на ${rubles(amount)}. Проверьте реквизиты получателя.`
-    );
+    const sent = await sendDocumentToChat(telegramId, `platezhka_${number}.pdf`, pdf, 'application/pdf', `Платёжка (черновик) для «${payeeName}» на ${rubles(amount)}. Проверьте реквизиты.`);
     return {
       ok: true,
       payload: {
         payee: payeeName,
-        found_in_base: payee !== null,
         amount: Number(amount),
-        amount_formatted: rubles(amount),
         pdf_sent: sent,
         note: sent
-          ? `PDF платёжки отправлен в чат.${
-              payee
-                ? payee.bankAccount
-                  ? ' Реквизиты получателя (р/с, ИНН) подставлены из базы.'
-                  : ' Контрагент найден, но без р/с — добавь реквизиты в карточке контрагента.'
-                : ' Получателя нет в базе — заведи контрагента с реквизитами.'
-            }`
+          ? `PDF платёжки отправлен в чат.${payee ? ' Чтобы платить прямо в Точку — добавь р/с и БИК в карточке контрагента «' + payeeName + '».' : ' Получателя нет в базе — заведи контрагента с р/с и БИК.'}`
           : 'Не удалось отправить PDF в чат.',
       },
     };
