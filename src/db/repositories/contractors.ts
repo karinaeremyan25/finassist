@@ -318,23 +318,54 @@ export async function updateContractorRequisites(
  */
 export async function findPayeeByName(
   name: string
-): Promise<{ name: string; inn: string | null; bankAccount: string | null; bik: string | null; kind: 'contractor' | 'employee' } | null> {
+): Promise<{ id: string | null; name: string; inn: string | null; bankAccount: string | null; bik: string | null; kind: 'contractor' | 'employee' } | null> {
   const like = `%${name.trim()}%`;
-  const c = await sql<{ name: string; inn: string | null; bank_account: string | null; bik: string | null }[]>`
-    SELECT name, inn, bank_account, bik FROM contractors
+  const c = await sql<{ id: string; name: string; inn: string | null; bank_account: string | null; bik: string | null }[]>`
+    SELECT id, name, inn, bank_account, bik FROM contractors
     WHERE name ILIKE ${like} AND status = 'active'
     ORDER BY char_length(name) LIMIT 1
   `;
-  if (c[0]) return { name: c[0].name, inn: c[0].inn, bankAccount: c[0].bank_account, bik: c[0].bik, kind: 'contractor' };
+  if (c[0]) return { id: c[0].id, name: c[0].name, inn: c[0].inn, bankAccount: c[0].bank_account, bik: c[0].bik, kind: 'contractor' };
 
   const e = await sql<{ full_name: string }[]>`
     SELECT full_name FROM employees
     WHERE full_name ILIKE ${like} AND status = 'active'
     ORDER BY char_length(full_name) LIMIT 1
   `;
-  if (e[0]) return { name: e[0].full_name, inn: null, bankAccount: null, bik: null, kind: 'employee' };
+  if (e[0]) return { id: null, name: e[0].full_name, inn: null, bankAccount: null, bik: null, kind: 'employee' };
 
   return null;
+}
+
+/**
+ * Сохраняет реквизиты получателя (имя из банка + ИНН + р/с + БИК), подтянутые
+ * из выписки Точки, чтобы в следующий раз не искать заново. Обновляет существующего
+ * контрагента (по company+lower(name) ИЛИ по id) либо создаёт нового (company ip).
+ */
+export async function upsertPayeeRequisites(input: {
+  contractorId: string | null;
+  name: string;
+  inn: string | null;
+  bankAccount: string;
+  bik: string;
+}): Promise<void> {
+  if (input.contractorId !== null) {
+    await sql`
+      UPDATE contractors
+      SET name = ${input.name}, inn = COALESCE(${input.inn}, inn),
+          bank_account = ${input.bankAccount}, bik = ${input.bik}, updated_at = NOW()
+      WHERE id = ${input.contractorId}::uuid
+    `;
+    return;
+  }
+  // Нет контрагента — создаём (ИП), если нет дубля по имени.
+  await sql`
+    INSERT INTO contractors (company_id, name, inn, bank_account, bik, contractor_type, match_pattern)
+    SELECT 'ip', ${input.name}, ${input.inn}, ${input.bankAccount}, ${input.bik}, 'company', ${input.name}
+    WHERE NOT EXISTS (
+      SELECT 1 FROM contractors c WHERE c.company_id = 'ip' AND lower(c.name) = lower(${input.name})
+    )
+  `;
 }
 
 /** Находит контрагента ООО по точному/похожему имени (для AI-оркестратора). */

@@ -139,6 +139,9 @@ const TxSchema = z.object({
   CreditorParty: PartySchema,
   DebtorAccount: AccountIdentificationSchema,
   CreditorAccount: AccountIdentificationSchema,
+  // Банк получателя/плательщика: identification = БИК (RU.CBR.BIK).
+  CreditorAgent: AccountIdentificationSchema.optional(),
+  DebtorAgent: AccountIdentificationSchema.optional(),
 });
 
 type TxItem = z.infer<typeof TxSchema>;
@@ -753,4 +756,70 @@ export async function syncTochka(
   );
 
   return { added, balancesUpdated, classified, dateTo: today };
+}
+
+// ── Поиск реквизитов контрагента по выписке Точки ──────────────────────────
+
+export interface CounterpartyRequisites {
+  name: string;
+  inn: string | null;
+  account: string | null; // 20-значный р/с
+  bik: string | null;      // 9-значный БИК
+}
+
+/**
+ * Ищет реквизиты получателя по его прошлым ИСХОДЯЩИМ платежам в выписке Точки
+ * (Debit → CreditorParty/CreditorAccount). Возвращает полное имя, ИНН, р/с, БИК.
+ * Берёт первый счёт, где нашёлся платёж с полными реквизитами (быстрее, чем
+ * сканировать все 9 счетов). Окно — 90 дней. null, если не найден.
+ */
+export async function fetchCounterpartyRequisites(
+  namePattern: string
+): Promise<CounterpartyRequisites | null> {
+  const token = config.TOCHKA_JWT_TOKEN;
+  if (!token) return null;
+  const pat = namePattern.trim().toLowerCase();
+  if (pat.length < 3) return null;
+
+  let accounts: string[];
+  try {
+    accounts = await fetchAccounts(token);
+  } catch {
+    return null;
+  }
+  const start = mskDateString(-90);
+  const end = mskDateString(0);
+
+  for (const acc of accounts) {
+    let txs: TxItem[] | null = null;
+    try {
+      txs = await fetchStatementTransactions(acc, start, end, token);
+    } catch {
+      continue;
+    }
+    if (!txs) continue;
+
+    // Перебираем от свежих к старым (выписка обычно по возрастанию даты — берём
+    // последнее совпадение).
+    let match: TxItem | null = null;
+    for (const tx of txs) {
+      if (tx.creditDebitIndicator !== 'Debit') continue;
+      const nm = (tx.CreditorParty?.name ?? '').toLowerCase();
+      if (nm.includes(pat)) match = tx; // перезаписываем — останется самое позднее
+    }
+    if (match === null) continue;
+
+    // Счёт получателя — CreditorAccount.identification; БИК — CreditorAgent.identification.
+    const account = (match.CreditorAccount?.identification ?? '').split('/')[0] ?? '';
+    const bik = (match.CreditorAgent?.identification ?? '').split('/')[0] ?? '';
+    if (account.length >= 18 && bik.length === 9) {
+      return {
+        name: match.CreditorParty?.name ?? namePattern,
+        inn: match.CreditorParty?.inn ?? null,
+        account,
+        bik,
+      };
+    }
+  }
+  return null;
 }

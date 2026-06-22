@@ -18,10 +18,11 @@ import { config } from '../../config.js';
 import { resolveWebAppUser, unauthorizedResponse, WebAppAuthError } from '../auth.js';
 import { callClaude } from '../../services/claude.js';
 import { logCommand, getCommand, finalizeCommand } from '../../db/repositories/aiCommands.js';
-import { findContractorByName, createContractor, findPayeeByName } from '../../db/repositories/contractors.js';
+import { findContractorByName, createContractor, findPayeeByName, upsertPayeeRequisites } from '../../db/repositories/contractors.js';
 import { createInvoice } from '../../db/repositories/invoices.js';
 import { generatePaymentOrderPdf } from '../../services/paymentOrder.js';
 import { createPaymentForSign } from '../../services/integrations/tochkaPayment.js';
+import { fetchCounterpartyRequisites } from '../../services/integrations/tochkaSync.js';
 import { sendDocumentToChat } from '../../services/telegramDoc.js';
 import { upsertRule } from '../../db/repositories/categoryRules.js';
 import { getPnlForPeriod, ENTITY_IDS, VALID_PNL_CATEGORIES } from '../../db/repositories/pnl.js';
@@ -565,21 +566,43 @@ async function executeIntent(intent: ParsedIntent, userId: string, telegramId: b
     }
     const amount = toKopecks(intent.amount_rub);
     const payee = await findPayeeByName(intent.contractor_name);
-    const payeeName = payee?.name ?? intent.contractor_name;
+    let payeeName = payee?.name ?? intent.contractor_name;
+    let payeeInn = payee?.inn ?? null;
+    let payeeAccount = payee?.bankAccount ?? null;
+    let payeeBik = payee?.bik ?? null;
     const purpose = intent.description ?? 'Оплата';
+
+    // Реквизитов нет в базе → подтягиваем из выписки Точки (по прошлым платежам).
+    // Берём оттуда и реальное полное имя получателя (например «ИП Петрова Татьяна»).
+    if (!payeeAccount || !payeeBik) {
+      const found = await fetchCounterpartyRequisites(intent.contractor_name);
+      if (found?.account && found.bik) {
+        payeeName = found.name;
+        payeeInn = found.inn ?? payeeInn;
+        payeeAccount = found.account;
+        payeeBik = found.bik;
+        // Сохраняем на будущее, чтобы в следующий раз не искать.
+        try {
+          await upsertPayeeRequisites({
+            contractorId: payee?.kind === 'contractor' ? payee.id : null,
+            name: found.name, inn: found.inn, bankAccount: found.account, bik: found.bik,
+          });
+        } catch { /* не критично */ }
+      }
+    }
 
     // 1) Если есть р/с и БИК — создаём платёж В ТОЧКЕ «на подпись» (деньги не
     //    спишутся, пока Карина не подпишет в банке).
-    if (payee?.bankAccount && payee.bik) {
+    if (payeeAccount && payeeBik) {
       const m = new Date(Date.now() + 3 * 60 * 60 * 1000);
       const p2 = (n: number): string => String(n).padStart(2, '0');
       const ymd = `${m.getUTCFullYear()}-${p2(m.getUTCMonth() + 1)}-${p2(m.getUTCDate())}`;
       const payNum = Number(`${p2(m.getUTCDate())}${p2(m.getUTCHours())}${p2(m.getUTCMinutes())}`);
       const pay = await createPaymentForSign({
         payer: 'ip',
-        counterpartyAccountNumber: payee.bankAccount.replace(/\D/g, '').slice(0, 20),
-        counterpartyBankBic: payee.bik.replace(/\D/g, '').slice(0, 9),
-        counterpartyInn: payee.inn,
+        counterpartyAccountNumber: payeeAccount.replace(/\D/g, '').slice(0, 20),
+        counterpartyBankBic: payeeBik.replace(/\D/g, '').slice(0, 9),
+        counterpartyInn: payeeInn,
         counterpartyName: payeeName,
         amountRub: Number(amount) / 100,
         purpose,
@@ -604,17 +627,17 @@ async function executeIntent(intent: ParsedIntent, userId: string, telegramId: b
         : `Не удалось создать платёж в Точке (${pay.error}). Прислал PDF-черновик.`;
       const pdf = await generatePaymentOrderPdf({
         number, date, payerName: 'ИП Карина Еремян', payerInn: null,
-        payeeName, payeeInn: payee.inn, payeeAccount: payee.bankAccount, payeeBic: payee.bik,
+        payeeName, payeeInn, payeeAccount, payeeBic: payeeBik,
         amountKopecks: amount, purpose,
       });
       const sent = await sendDocumentToChat(telegramId, `platezhka_${number}.pdf`, pdf, 'application/pdf', `Платёжка (черновик) для «${payeeName}» на ${rubles(amount)}.`);
       return { ok: true, payload: { payee: payeeName, amount: Number(amount), pdf_sent: sent, note: reason } };
     }
 
-    // 2) Реквизитов нет → PDF-черновик + просьба заполнить р/с/БИК.
+    // 2) Реквизитов нет ни в базе, ни в выписке Точки → PDF + просьба заполнить.
     const pdf = await generatePaymentOrderPdf({
       number, date, payerName: 'ИП Карина Еремян', payerInn: null,
-      payeeName, payeeInn: payee?.inn ?? null, payeeAccount: null, payeeBic: null,
+      payeeName, payeeInn, payeeAccount: null, payeeBic: null,
       amountKopecks: amount, purpose,
     });
     const sent = await sendDocumentToChat(telegramId, `platezhka_${number}.pdf`, pdf, 'application/pdf', `Платёжка (черновик) для «${payeeName}» на ${rubles(amount)}. Проверьте реквизиты.`);
@@ -625,7 +648,7 @@ async function executeIntent(intent: ParsedIntent, userId: string, telegramId: b
         amount: Number(amount),
         pdf_sent: sent,
         note: sent
-          ? `PDF платёжки отправлен в чат.${payee ? ' Чтобы платить прямо в Точку — добавь р/с и БИК в карточке контрагента «' + payeeName + '».' : ' Получателя нет в базе — заведи контрагента с р/с и БИК.'}`
+          ? `PDF платёжки отправлен в чат. Реквизиты получателя не нашлись в Точке (нет прошлых платежей этому контрагенту) — заполни р/с и БИК в карточке контрагента «${payeeName}», и платёж пойдёт прямо в Точку.`
           : 'Не удалось отправить PDF в чат.',
       },
     };
