@@ -279,6 +279,10 @@ export async function handleProdamusWebhook(
     directionId: null,
     categoryId,
     flowType: 'income',
+    // Деньги «в пути»: продажа в Продамусе есть, но на счёт Точки ещё не пришла
+    // (зачисление обычно на следующие сутки). Когда выплата Продамуса упадёт в
+    // Точку — tochkaSync переведёт эти операции в 'completed'.
+    txStatus: 'pending',
   });
 
   log.info({ source: 'prodamus', inserted, products_count: payload.products.length }, 'prodamus_webhook_processed');

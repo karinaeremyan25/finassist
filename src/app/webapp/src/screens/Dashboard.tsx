@@ -35,6 +35,8 @@ export function Dashboard() {
   // План — всегда по текущему месяцу МСК (не зависит от выбранного периода).
   const planMonth = currentMonthYm();
   const plan = useAsync(() => api.plan(planMonth), [planMonth]);
+  // Деньги в пути (Продамус ещё не зачислен в Точку + расходы в обработке).
+  const inTransit = useAsync(() => api.inTransit('total', planMonth), [planMonth]);
 
   // Признак «нет данных за период по выбранному юрлицу/направлению».
   const summaryEmpty =
@@ -101,6 +103,38 @@ export function Dashboard() {
           <BalanceBlock data={summary.data} />
         ) : null}
       </section>
+
+      {/* Деньги в пути */}
+      {inTransit.status === 'success' &&
+      inTransit.data &&
+      (inTransit.data.income.in_transit > 0 || inTransit.data.expenses.in_transit > 0) ? (
+        <section className="mt-3 px-4">
+          <div className="rounded-md bg-surface-2 p-4" style={{ border: '1px solid var(--border-strong)' }}>
+            <p className="mb-2 text-[13px] font-medium uppercase tracking-[0.04em] text-ink-muted">
+              Деньги в пути
+            </p>
+            {inTransit.data.income.in_transit > 0 ? (
+              <div className="flex items-center justify-between py-1">
+                <span className="text-[13px] text-ink">Поступления в пути (Продамус)</span>
+                <span className="num text-[15px] font-semibold" style={{ color: 'var(--income)' }}>
+                  +{rubles(inTransit.data.income.in_transit)}
+                </span>
+              </div>
+            ) : null}
+            {inTransit.data.expenses.in_transit > 0 ? (
+              <div className="flex items-center justify-between py-1">
+                <span className="text-[13px] text-ink">Расходы в обработке</span>
+                <span className="num text-[15px] font-semibold" style={{ color: 'var(--expense)' }}>
+                  −{rubles(inTransit.data.expenses.in_transit)}
+                </span>
+              </div>
+            ) : null}
+            <p className="mt-1 text-[11px] text-ink-faint">
+              Уже есть, но ещё не на счёте Точки. В налог не идут, пока не зачислены.
+            </p>
+          </div>
+        </section>
+      ) : null}
 
       {/* Пусто по выбранному юрлицу/направлению за период */}
       {summaryEmpty ? (

@@ -608,6 +608,9 @@ export async function syncTochka(
 
   const createdBy: bigint = config.OWNER_TG_ID;
 
+  // Флаг: в этом синке пришла выплата от Продамуса → деньги «в пути» дошли.
+  let prodamusPayoutSeen = false;
+
   // Даты окна синхронизации в МСК
   const today = mskDateString(0);
   const startDate = mskDateString(-SYNC_DAYS_BACK);
@@ -683,7 +686,9 @@ export async function syncTochka(
       // Пропускаем ЗАЧИСЛЕНИЯ от Продамуса: доход Продамуса учитывается
       // по каждой продаже (вебхук/выгрузка) с разбивкой ДПО→ООО / клуб→ИП.
       // Банковское зачисление — это выплата уже учтённых продаж (иначе двойной счёт).
+      // НО факт прихода выплаты = деньги «в пути» дошли → потом переведём их в completed.
       if (tx.creditDebitIndicator === 'Credit' && /продамус/i.test(tx.DebtorParty?.name ?? '')) {
+        prodamusPayoutSeen = true;
         continue;
       }
 
@@ -706,6 +711,27 @@ export async function syncTochka(
       if (result.wasInserted) {
         added++;
       }
+    }
+  }
+
+  // Деньги в пути: если пришла выплата Продамуса — продажи прошлых дней дошли.
+  // Переводим pending-доход Продамуса с occurred_at < сегодня в completed.
+  // Сегодняшние продажи остаются «в пути» (зачисление обычно на следующие сутки).
+  if (prodamusPayoutSeen) {
+    try {
+      const flipped = await sql<{ id: string }[]>`
+        UPDATE transactions
+        SET tx_status = 'completed', updated_at = NOW()
+        WHERE deleted_at IS NULL
+          AND flow_type = 'income'
+          AND tx_status = 'pending'
+          AND source_id = (SELECT id FROM sources WHERE code = 'prodamus')
+          AND occurred_at < ${today}
+        RETURNING id
+      `;
+      log.info({ handler: 'tochkaSync', flipped: flipped.length }, 'prodamus_in_transit_settled');
+    } catch (err) {
+      log.warn({ handler: 'tochkaSync', err: String(err) }, 'prodamus_settle_failed');
     }
   }
 
