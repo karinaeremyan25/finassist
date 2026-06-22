@@ -103,8 +103,9 @@ export function buildRouter(): Router {
   router.get('/api/employees/export', employeesExportHandler);
 
   // ── Контрагенты и счета (US-102) ──────────────────────────────────────────
-  router.add('GET',  '/api/contractors', contractorsHandler);
-  router.add('POST', '/api/contractors', contractorsHandler);
+  router.add('GET',   '/api/contractors', contractorsHandler);
+  router.add('POST',  '/api/contractors', contractorsHandler);
+  router.add('PATCH', '/api/contractors', contractorsHandler);
   router.post('/api/contractors/sync', contractorsSyncHandler);
   router.post('/api/invoices/generate', invoiceGenerateHandler);
 

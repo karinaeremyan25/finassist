@@ -15,6 +15,7 @@ import {
   listContractorsWithBalance,
   createContractor,
   deriveContractorsFromTransactions,
+  updateContractorRequisites,
 } from '../../db/repositories/contractors.js';
 import { createInvoice } from '../../db/repositories/invoices.js';
 import { toKopecks } from '../../utils/money.js';
@@ -57,6 +58,8 @@ export const contractorsListHandler: ApiHandler = async (req): Promise<ApiRespon
           phone: c.phone,
           email: c.email,
           inn: c.inn,
+          bank_account: c.bankAccount,
+          bik: c.bik,
           contractor_type: c.contractorType,
           status: c.status,
           total_invoiced: c.totalInvoiced,
@@ -132,9 +135,39 @@ export const contractorCreateHandler: ApiHandler = async (req): Promise<ApiRespo
   }
 };
 
-/** GET → список, POST → создать. */
+// ── PATCH /api/contractors — реквизиты (р/с, БИК) ──────────────────────────
+
+const UpdateRequisitesSchema = z.object({
+  id: z.string().uuid(),
+  bank_account: z.string().max(40).nullish(),
+  bik: z.string().max(20).nullish(),
+});
+
+export const contractorUpdateHandler: ApiHandler = async (req): Promise<ApiResponse> => {
+  const start = Date.now();
+  try {
+    const user = await resolveWebAppUser(req);
+    const parsed = UpdateRequisitesSchema.safeParse(req.body);
+    if (!parsed.success) return invalidRequest('Нужен id контрагента');
+    const ok = await updateContractorRequisites(
+      parsed.data.id,
+      parsed.data.bank_account ?? null,
+      parsed.data.bik ?? null
+    );
+    if (!ok) return { status: 404, body: { error: { code: 'not_found', message: 'Контрагент не найден' } } };
+    log.info({ telegram_id: user.telegramId.toString(), handler: 'contractor_update', id: parsed.data.id, latency_ms: Date.now() - start }, 'contractor_update_ok');
+    return { status: 200, body: { id: parsed.data.id, updated: true } };
+  } catch (err) {
+    if (err instanceof WebAppAuthError) return unauthorizedResponse(err.reason);
+    log.error({ err, handler: 'contractor_update', latency_ms: Date.now() - start }, 'contractor_update_error');
+    return invalidRequest('Не удалось сохранить реквизиты');
+  }
+};
+
+/** GET → список, POST → создать, PATCH → реквизиты. */
 export const contractorsHandler: ApiHandler = async (req): Promise<ApiResponse> => {
   if (req.method === 'POST') return contractorCreateHandler(req);
+  if (req.method === 'PATCH') return contractorUpdateHandler(req);
   return contractorsListHandler(req);
 };
 

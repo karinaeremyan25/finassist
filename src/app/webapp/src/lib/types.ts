@@ -372,6 +372,8 @@ export interface ContractorRow {
   phone: string | null;
   email: string | null;
   inn: string | null;
+  bank_account: string | null;
+  bik: string | null;
   contractor_type: 'individual' | 'company' | 'self_employed';
   status: 'active' | 'archived';
   total_invoiced: number;

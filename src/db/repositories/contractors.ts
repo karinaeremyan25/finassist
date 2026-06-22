@@ -50,6 +50,8 @@ export interface ContractorWithBalance {
   phone: string | null;
   email: string | null;
   inn: string | null;
+  bankAccount: string | null;
+  bik: string | null;
   contractorType: ContractorType;
   status: 'active' | 'archived';
   matchPattern: string | null;
@@ -67,6 +69,8 @@ interface ContractorRaw {
   phone: string | null;
   email: string | null;
   inn: string | null;
+  bank_account: string | null;
+  bik: string | null;
   contractor_type: ContractorType;
   status: 'active' | 'archived';
   match_pattern: string | null;
@@ -84,7 +88,7 @@ export async function listContractorsWithBalance(
 
   const contractors = await sql<ContractorRaw[]>`
     SELECT c.id, c.company_id, c.name, c.phone, c.email, c.inn,
-           c.contractor_type, c.status, c.match_pattern
+           c.bank_account, c.bik, c.contractor_type, c.status, c.match_pattern
     FROM contractors c
     ${companyFilter}
     ORDER BY c.name
@@ -210,6 +214,8 @@ export async function listContractorsWithBalance(
       phone: c.phone,
       email: c.email,
       inn: c.inn,
+      bankAccount: c.bank_account,
+      bik: c.bik,
       contractorType: c.contractor_type,
       status: c.status,
       matchPattern: c.match_pattern,
@@ -291,27 +297,42 @@ export async function deriveContractorsFromTransactions(company: Company | null)
   return created;
 }
 
+/** Обновляет банковские реквизиты контрагента. true, если запись существовала. */
+export async function updateContractorRequisites(
+  id: string,
+  bankAccount: string | null,
+  bik: string | null
+): Promise<boolean> {
+  const rows = await sql<{ id: string }[]>`
+    UPDATE contractors
+    SET bank_account = ${bankAccount}, bik = ${bik}, updated_at = NOW()
+    WHERE id = ${id}::uuid
+    RETURNING id
+  `;
+  return rows.length > 0;
+}
+
 /**
- * Ищет получателя платежа по имени среди контрагентов (есть ИНН) и сотрудников.
- * Для AI-платёжки: достаёт name + inn из базы. Возвращает null, если не найден.
+ * Ищет получателя платежа по имени среди контрагентов (есть реквизиты) и сотрудников.
+ * Для AI-платёжки: достаёт name + inn + р/с + БИК из базы. null, если не найден.
  */
 export async function findPayeeByName(
   name: string
-): Promise<{ name: string; inn: string | null; kind: 'contractor' | 'employee' } | null> {
+): Promise<{ name: string; inn: string | null; bankAccount: string | null; bik: string | null; kind: 'contractor' | 'employee' } | null> {
   const like = `%${name.trim()}%`;
-  const c = await sql<{ name: string; inn: string | null }[]>`
-    SELECT name, inn FROM contractors
+  const c = await sql<{ name: string; inn: string | null; bank_account: string | null; bik: string | null }[]>`
+    SELECT name, inn, bank_account, bik FROM contractors
     WHERE name ILIKE ${like} AND status = 'active'
     ORDER BY char_length(name) LIMIT 1
   `;
-  if (c[0]) return { name: c[0].name, inn: c[0].inn, kind: 'contractor' };
+  if (c[0]) return { name: c[0].name, inn: c[0].inn, bankAccount: c[0].bank_account, bik: c[0].bik, kind: 'contractor' };
 
   const e = await sql<{ full_name: string }[]>`
     SELECT full_name FROM employees
     WHERE full_name ILIKE ${like} AND status = 'active'
     ORDER BY char_length(full_name) LIMIT 1
   `;
-  if (e[0]) return { name: e[0].full_name, inn: null, kind: 'employee' };
+  if (e[0]) return { name: e[0].full_name, inn: null, bankAccount: null, bik: null, kind: 'employee' };
 
   return null;
 }

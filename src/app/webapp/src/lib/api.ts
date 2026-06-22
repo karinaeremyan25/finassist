@@ -254,6 +254,14 @@ export const api = {
     return request(`/api/contractors/sync${q}`, { method: 'POST', body: '{}' });
   },
 
+  /** Сохранить банковские реквизиты контрагента (р/с, БИК). */
+  updateContractorRequisites(id: string, bank_account: string | null, bik: string | null): Promise<{ updated: boolean }> {
+    return request('/api/contractors', {
+      method: 'PATCH',
+      body: JSON.stringify({ id, bank_account, bik }),
+    });
+  },
+
   generateInvoice(body: {
     contractor_id: string;
     amount: string | number;

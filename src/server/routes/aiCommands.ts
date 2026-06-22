@@ -572,8 +572,8 @@ async function executeIntent(intent: ParsedIntent, userId: string, telegramId: b
       payerInn: null,
       payeeName,
       payeeInn: payee?.inn ?? null,
-      payeeAccount: null,
-      payeeBic: null,
+      payeeAccount: payee?.bankAccount ?? null,
+      payeeBic: payee?.bik ?? null,
       amountKopecks: amount,
       purpose: intent.description ?? 'Оплата',
     });
@@ -590,7 +590,13 @@ async function executeIntent(intent: ParsedIntent, userId: string, telegramId: b
         amount_formatted: rubles(amount),
         pdf_sent: sent,
         note: sent
-          ? `PDF платёжки отправлен в чат.${payee ? ' Реквизиты получателя взяты из базы.' : ' Получателя нет в базе — заполните р/с и ИНН.'} Расчётный счёт/БИК добавьте перед оплатой.`
+          ? `PDF платёжки отправлен в чат.${
+              payee
+                ? payee.bankAccount
+                  ? ' Реквизиты получателя (р/с, ИНН) подставлены из базы.'
+                  : ' Контрагент найден, но без р/с — добавь реквизиты в карточке контрагента.'
+                : ' Получателя нет в базе — заведи контрагента с реквизитами.'
+            }`
           : 'Не удалось отправить PDF в чат.',
       },
     };

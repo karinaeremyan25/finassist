@@ -218,6 +218,8 @@ function ContractorCard({ c, onChange }: { c: ContractorRow; onChange: () => voi
             <p className="py-1 text-[12px] text-ink-faint">Платежей нет.</p>
           )}
 
+          <Requisites c={c} onSaved={onChange} />
+
           {c.company_id === 'ooo' ? (
             <NewInvoice contractorId={c.id} onCreated={onChange} />
           ) : (
@@ -229,6 +231,70 @@ function ContractorCard({ c, onChange }: { c: ContractorRow; onChange: () => voi
         <TransactionDetail tx={detail} onClose={() => setDetail(null)} onChanged={onChange} />
       ) : null}
     </li>
+  );
+}
+
+/** Реквизиты контрагента (р/с, БИК): показ + редактирование. */
+function Requisites({ c, onSaved }: { c: ContractorRow; onSaved: () => void }) {
+  const [edit, setEdit] = useState(false);
+  const [acc, setAcc] = useState(c.bank_account ?? '');
+  const [bik, setBik] = useState(c.bik ?? '');
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    setBusy(true);
+    try {
+      await api.updateContractorRequisites(c.id, acc.trim() || null, bik.trim() || null);
+      setEdit(false);
+      onSaved();
+    } catch {
+      /* пусто — кнопка вернётся активной */
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!edit) {
+    return (
+      <div className="mt-3 rounded-md bg-surface-1 px-3 py-2">
+        <div className="flex items-center justify-between">
+          <span className="text-[12px] font-medium uppercase tracking-[0.04em] text-ink-muted">Реквизиты</span>
+          <button type="button" onClick={() => { hapticSelection(); setEdit(true); }} className="text-[12px] text-accent">
+            {c.bank_account ? 'Изменить' : 'Заполнить'}
+          </button>
+        </div>
+        <p className="num mt-1 text-[12px] text-ink-faint">
+          {c.bank_account ? `р/с ${c.bank_account}` : 'р/с —'} · {c.bik ? `БИК ${c.bik}` : 'БИК —'}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3 flex flex-col gap-2 rounded-md bg-surface-1 p-3">
+      <input
+        inputMode="numeric"
+        value={acc}
+        onChange={(e) => setAcc(e.target.value)}
+        placeholder="Расчётный счёт (20 цифр)"
+        className="num min-h-[40px] rounded-md bg-surface-3 px-3 text-[14px] text-ink placeholder:text-ink-faint"
+      />
+      <input
+        inputMode="numeric"
+        value={bik}
+        onChange={(e) => setBik(e.target.value)}
+        placeholder="БИК (9 цифр)"
+        className="num min-h-[40px] rounded-md bg-surface-3 px-3 text-[14px] text-ink placeholder:text-ink-faint"
+      />
+      <div className="flex gap-2">
+        <button type="button" disabled={busy} onClick={save} className="min-h-[40px] flex-1 rounded-pill bg-accent text-[13px] font-semibold text-accent-ink shadow-glow active:opacity-90 disabled:opacity-60">
+          {busy ? 'Сохраняю…' : 'Сохранить'}
+        </button>
+        <button type="button" onClick={() => setEdit(false)} className="min-h-[40px] rounded-pill border border-border-strong px-4 text-[13px] text-ink-muted">
+          Отмена
+        </button>
+      </div>
+    </div>
   );
 }
 
