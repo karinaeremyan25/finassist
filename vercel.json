@@ -11,5 +11,9 @@
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/router" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
+  ],
+  "crons": [
+    { "path": "/api/tochka/sync?key=b7db46006fa87ca20357f1ea33313a5f2767b48f15c376c10c5d850214f9fb9b", "schedule": "0 6 * * *" },
+    { "path": "/api/tochka/sync?key=b7db46006fa87ca20357f1ea33313a5f2767b48f15c376c10c5d850214f9fb9b", "schedule": "0 16 * * *" }
   ]
 }
