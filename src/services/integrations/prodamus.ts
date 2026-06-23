@@ -153,15 +153,77 @@ export function computeProdamusSignature(
 }
 
 /**
+ * Разбирает ключ form-поля с квадратными скобками в путь сегментов.
+ * "products[0][name]" → ["products", "0", "name"].
+ */
+function parseKeyPath(key: string): string[] {
+  const path: string[] = [];
+  const head = key.indexOf('[');
+  if (head === -1) return [key];
+  path.push(key.slice(0, head));
+  const re = /\[([^\]]*)\]/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(key)) !== null) path.push(m[1] ?? '');
+  return path;
+}
+
+/**
+ * Превращает объект с плоскими скобочными ключами (как их отдаёт парсер тела
+ * Vercel: `products[0][name]`) во ВЛОЖЕННУЮ структуру — такую же, какую PHP
+ * формирует в $_POST и над которой Prodamus считает подпись. Узлы с ключами
+ * 0..n-1 нормализуются в массивы (как PHP «список» → JSON-массив).
+ *
+ * Это КЛЮЧЕВОЙ момент: без реконструкции подпись считается над плоскими
+ * ключами и НИКОГДА не совпадает с подписью Prodamus (вложенной) → вечный 400.
+ */
+export function unflattenFields(flat: Record<string, unknown>): Record<string, unknown> {
+  const root: Record<string, unknown> = {};
+  for (const [rawKey, value] of Object.entries(flat)) {
+    const segs = parseKeyPath(rawKey);
+    let node: Record<string, unknown> = root;
+    for (let i = 0; i < segs.length; i++) {
+      const seg = segs[i] ?? '';
+      if (i === segs.length - 1) {
+        node[seg] = value;
+      } else {
+        const next = node[seg];
+        if (next === null || typeof next !== 'object') node[seg] = {};
+        node = node[seg] as Record<string, unknown>;
+      }
+    }
+  }
+  return normalizeArrays(root) as Record<string, unknown>;
+}
+
+/** Рекурсивно: объект с ключами «0..n-1» → массив (как PHP список). */
+function normalizeArrays(value: unknown): unknown {
+  if (value === null || typeof value !== 'object') return value;
+  const obj = value as Record<string, unknown>;
+  const keys = Object.keys(obj);
+  const isList =
+    keys.length > 0 && keys.every((k, i) => k === String(i));
+  if (isList) return keys.map((k) => normalizeArrays(obj[k]));
+  const out: Record<string, unknown> = {};
+  for (const k of keys) out[k] = normalizeArrays(obj[k]);
+  return out;
+}
+
+/**
  * Проверяет подпись Prodamus из заголовка Sign.
+ *
+ * Устойчиво к тому, как тело пришло: сверяем подпись и над ВЛОЖЕННОЙ
+ * реконструкцией (как считает Prodamus), и над исходными плоскими полями
+ * (на случай, если парсер уже отдал вложенную структуру или формат изменится).
+ * Обе ветки требуют секрет — безопасность сохраняется.
  */
 export function verifyProdamusSignature(
   fields: Record<string, unknown>,
   signHeader: string,
   secretKey: string
 ): boolean {
-  const expected = computeProdamusSignature(fields, secretKey);
-  return expected.toLowerCase() === signHeader.toLowerCase();
+  const want = signHeader.toLowerCase();
+  const candidates = [unflattenFields(fields), fields];
+  return candidates.some((c) => computeProdamusSignature(c, secretKey).toLowerCase() === want);
 }
 
 // ── Вспомогательные функции ───────────────────────────────────────────────
@@ -198,8 +260,16 @@ export async function handleProdamusWebhook(
   // Проверка подписи
   const signOk = verifyProdamusSignature(rawFields, signHeader, secretKey);
   if (!signOk) {
+    // Диагностика без утечки секрета: какие ключи пришли + первые символы
+    // ожидаемой подписи — чтобы быстро понять причину по логам Vercel.
     log.warn(
-      { source: 'prodamus', signature_ok: false },
+      {
+        source: 'prodamus',
+        signature_ok: false,
+        keys: Object.keys(rawFields).slice(0, 30),
+        sign_recv_prefix: signHeader.slice(0, 10),
+        sign_calc_prefix: computeProdamusSignature(unflattenFields(rawFields), secretKey).slice(0, 10),
+      },
       'prodamus_webhook_bad_signature'
     );
     return { ok: false, status: 400, responseBody: 'bad sign' };
@@ -207,8 +277,10 @@ export async function handleProdamusWebhook(
 
   log.info({ source: 'prodamus', signature_ok: true }, 'prodamus_webhook_signature_ok');
 
-  // Zod-валидация payload
-  const parsed = ProdamusWebhookSchema.safeParse(rawFields);
+  // Zod-валидация payload по ВЛОЖЕННОЙ структуре (products как настоящий массив,
+  // иначе товар не распознаётся и маршрут по продукту падает в дефолт).
+  const nested = unflattenFields(rawFields);
+  const parsed = ProdamusWebhookSchema.safeParse(nested);
   if (!parsed.success) {
     log.warn({ source: 'prodamus', issues: parsed.error.issues.length }, 'prodamus_webhook_invalid_payload');
     return { ok: false, status: 400, responseBody: 'bad sign' };
