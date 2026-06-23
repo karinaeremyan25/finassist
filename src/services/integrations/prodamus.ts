@@ -7,21 +7,22 @@ import type { RawSourceTransaction } from './types.js';
 import { insertSyncTransactions } from '../../db/repositories/integrations.js';
 import { sql } from '../../db/client.js';
 
-/** UUID ИП Карина Еремян и ООО Ассургина. */
+/** UUID ИП Карина Еремян (все приходы Продамуса — на ИП). */
 const ENTITY_IP = '8355ee9e-11ed-4e73-8bcd-2dc0ff3c8068';
-const ENTITY_OOO = 'ce729bf9-649c-41c5-bbfd-ed0fb785c45d';
 
 /**
- * Маршрут продажи Продамуса по названию продукта (решение владельца):
- * курс ДПО «Психология здоровья» → ООО / prodamus_course;
- * клуб «Метанойя» и всё прочее → ИП / prodamus_club.
+ * Маршрут продажи Продамуса по названию продукта.
+ *
+ * ВАЖНО (уточнение бухгалтерии, 23.06.2026): Продамус — эквайринг ИП Еремян,
+ * ВСЕ выплаты Продамуса падают на счёт ИП независимо от продукта. Поэтому
+ * entityId ВСЕГДА = ИП. ООО получает доход только напрямую в Точку (счёт 40702).
+ * Название продукта используем лишь для категории-направления (курс/клуб),
+ * чтобы видеть разбивку в аналитике — но НЕ для смены юрлица/налоговой базы.
  */
 function routeProdamusProduct(name: string): { entityId: string; categoryCode: string } {
   const t = name.toLowerCase();
-  if (/курс/.test(t) && /психолог/.test(t)) {
-    return { entityId: ENTITY_OOO, categoryCode: 'prodamus_course' };
-  }
-  return { entityId: ENTITY_IP, categoryCode: 'prodamus_club' };
+  const categoryCode = /курс/.test(t) && /психолог/.test(t) ? 'prodamus_course' : 'prodamus_club';
+  return { entityId: ENTITY_IP, categoryCode };
 }
 
 /**
