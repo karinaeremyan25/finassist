@@ -22,9 +22,9 @@ const ConfigSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('production'),
   HEALTHCHECKS_URL: z.string().url().optional(),
   CLAUDE_MODEL: z.string().default('claude-sonnet-4-6'),
-  // AI-наставник Mini App — качественный диалог, поэтому Opus (отдельно от
-  // детерминированного классификатора на CLAUDE_MODEL). См. ai-agent-spec.md.
-  AI_MENTOR_MODEL: z.string().default('claude-opus-4-8'),
+  // AI-наставник Mini App. По умолчанию Sonnet 4.6 ради экономии (Opus в ~5 раз
+  // дороже). Можно вернуть Opus через env AI_MENTOR_MODEL=claude-opus-4-8.
+  AI_MENTOR_MODEL: z.string().default('claude-sonnet-4-6'),
   DEEPGRAM_API_KEY: z.string().optional(),
   // Mini App / Web App HTTP-сервер
   WEBAPP_PORT: z.coerce.number().int().positive().default(8080),
