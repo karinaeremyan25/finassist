@@ -278,7 +278,8 @@ async function syncFundBalance(accountId: string, token: string): Promise<boolea
   const parsed = BalancesResponseSchema.safeParse(raw);
   if (!parsed.success) return false;
 
-  const closingAvail = parsed.data.Data.Balance.find((b) => b.type === 'ClosingAvailable');
+  const balances = parsed.data.Data.Balance;
+  const closingAvail = balances.find((b) => b.type === 'ClosingAvailable');
   if (closingAvail === undefined) return false;
 
   let kop: bigint;
@@ -288,9 +289,28 @@ async function syncFundBalance(accountId: string, token: string): Promise<boolea
     return false;
   }
 
+  // Деньги в обработке: Точка отдаёт Expected (сумма незавершённых операций).
+  // ClosingAvailable = OpeningAvailable − Expected, поэтому направление берём по
+  // знаку (Closing − Opening): если остаток уменьшился → расход в обработке (<0).
+  let processing = 0n;
+  const expected = balances.find((b) => b.type === 'Expected');
+  const opening = balances.find((b) => b.type === 'OpeningAvailable');
+  if (expected !== undefined) {
+    try {
+      const exp = toKopecks(expected.Amount.amount);
+      if (exp !== 0n) {
+        const open = opening !== undefined ? toKopecks(opening.Amount.amount) : kop;
+        // kop (Closing) < open (Opening) → деньги уходят → расход в обработке (<0).
+        processing = kop < open ? -exp : exp;
+      }
+    } catch {
+      processing = 0n;
+    }
+  }
+
   const updated = await sql<{ id: string }[]>`
     UPDATE funds
-    SET balance = ${kop}
+    SET balance = ${kop}, processing_kopecks = ${processing}
     WHERE tochka_account_id = ${accountId}
       AND deleted_at IS NULL
     RETURNING id

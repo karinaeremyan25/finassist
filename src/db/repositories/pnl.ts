@@ -352,9 +352,23 @@ export async function getInTransitTotals(
   const inc = rows.find((r) => r.flow_type === 'income');
   const exp = rows.find((r) => r.flow_type === 'expense');
   const incomeTotal = inc?.total ?? 0n;
-  const incomeTransit = inc?.in_transit ?? 0n;
+  let incomeTransit = inc?.in_transit ?? 0n;
   const expenseTotal = exp?.total ?? 0n;
-  const expenseTransit = exp?.in_transit ?? 0n;
+  let expenseTransit = exp?.in_transit ?? 0n;
+
+  // Расходы/доходы «в обработке» из баланса Точки (поле Expected, лежит в
+  // funds.processing_kopecks): <0 — расход в обработке, >0 — доход в обработке.
+  // Это текущий снимок по счетам (не привязан к периоду) — показываем как «в пути».
+  const fundFilter = entityIds !== null ? sql`AND entity_id = ANY(${entityIds})` : sql``;
+  const procRows = await sql<{ out_processing: bigint; in_processing: bigint }[]>`
+    SELECT
+      COALESCE(SUM(-processing_kopecks) FILTER (WHERE processing_kopecks < 0), 0)::bigint AS out_processing,
+      COALESCE(SUM(processing_kopecks) FILTER (WHERE processing_kopecks > 0), 0)::bigint AS in_processing
+    FROM funds
+    WHERE deleted_at IS NULL ${fundFilter}
+  `;
+  expenseTransit += procRows[0]?.out_processing ?? 0n;
+  incomeTransit += procRows[0]?.in_processing ?? 0n;
 
   return {
     income: { total: incomeTotal, inTransit: incomeTransit, real: incomeTotal - incomeTransit },
