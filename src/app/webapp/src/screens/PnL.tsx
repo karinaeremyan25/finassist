@@ -268,12 +268,55 @@ function MonthView({ entity, month }: { entity: PnlEntity; month: string }) {
     <div className="flex flex-col gap-6">
       <KpiGrid data={data} />
       {entity === 'total' ? <EntityProfitSummary month={month} /> : null}
+      <InTransitBlock entity={entity} month={month} />
       <IncomeBlock data={data} entity={entity} period={month} />
       <ExpenseBlock data={data} />
       <NetProfitBlock data={data} />
       <PersonalBlock
         total={personal.status === 'success' ? personal.data?.total ?? 0 : 0}
       />
+    </div>
+  );
+}
+
+/**
+ * «Деньги в пути» (US-104): продажи Продамуса есть, но выплата ещё не дошла в
+ * Точку (доход pending) + расходы в обработке. В налоговую базу АУСН входит
+ * валовая сумма (с «в пути»), но управленчески полезно видеть, сколько ещё
+ * «летит». Рендерится только когда есть что показать — иначе блок скрыт.
+ */
+function InTransitBlock({ entity, month }: { entity: PnlEntity; month: string }) {
+  const it = useAsync(() => api.inTransit(entity, month), [entity, month]);
+  if (it.status !== 'success' || !it.data) return null;
+  const incTransit = it.data.income.in_transit;
+  const expTransit = it.data.expenses.in_transit;
+  if (incTransit <= 0 && expTransit <= 0) return null;
+  return (
+    <div className="rounded-md bg-surface-2 p-4">
+      <h3 className="mb-2 text-[13px] font-medium uppercase tracking-[0.04em] text-ink-faint">
+        Деньги в пути
+      </h3>
+      <div className="flex flex-col gap-1.5">
+        {incTransit > 0 ? (
+          <div className="flex items-baseline justify-between">
+            <span className="text-[13px] text-ink-muted">Поступления в пути (Продамус)</span>
+            <span className="num text-[14px] font-semibold" style={{ color: 'var(--income)' }}>
+              +{rubles(incTransit)}
+            </span>
+          </div>
+        ) : null}
+        {expTransit > 0 ? (
+          <div className="flex items-baseline justify-between">
+            <span className="text-[13px] text-ink-muted">Расходы в обработке</span>
+            <span className="num text-[14px] font-semibold" style={{ color: 'var(--expense)' }}>
+              −{rubles(expTransit)}
+            </span>
+          </div>
+        ) : null}
+      </div>
+      <p className="mt-2 text-[11px] text-ink-faint">
+        Уже состоялось, но ещё не зачислено/не списано. Войдёт в проведённые суммы, как дойдёт.
+      </p>
     </div>
   );
 }
