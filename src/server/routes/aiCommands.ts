@@ -21,7 +21,7 @@ import { logCommand, getCommand, finalizeCommand } from '../../db/repositories/a
 import { findContractorByName, createContractor, findPayeeByName, upsertPayeeRequisites } from '../../db/repositories/contractors.js';
 import { createInvoice } from '../../db/repositories/invoices.js';
 import { generatePaymentOrderPdf } from '../../services/paymentOrder.js';
-import { createPaymentForSign } from '../../services/integrations/tochkaPayment.js';
+import { createPaymentForSign, createTaxPaymentForSign } from '../../services/integrations/tochkaPayment.js';
 import { fetchCounterpartyRequisites } from '../../services/integrations/tochkaSync.js';
 import { sendDocumentToChat } from '../../services/telegramDoc.js';
 import { upsertRule } from '../../db/repositories/categoryRules.js';
@@ -533,7 +533,8 @@ async function executeIntent(intent: ParsedIntent, userId: string, telegramId: b
     const { date, number } = todayMskParts();
 
     // (А) НАЛОГ: АУСН «доходы» 8% с ВАЛОВЫХ продаж (полная сумма на Продамус/Lava,
-    // включая «в пути»), БЕЗ вычета комиссии. Считаем по ИП и ООО отдельно.
+    // включая «в пути»), БЕЗ вычета комиссии. Считаем по ИП и ООО отдельно и
+    // создаём ЕНП-платёж «на подпись» в Точке для каждого юрлица с налогом > 0.
     if (intent.is_tax) {
       const period = currentMonthMsk();
       const ipPnl = await getPnlForPeriod(period, [ENTITY_IDS.ip]);
@@ -541,6 +542,41 @@ async function executeIntent(intent: ParsedIntent, userId: string, telegramId: b
       const ipTax = BigInt(Math.round(Number(ipPnl.incomeTotal) * 0.08));
       const oooTax = BigInt(Math.round(Number(oooPnl.incomeTotal) * 0.08));
       const totalTax = ipTax + oooTax;
+
+      const m = new Date(Date.now() + 3 * 60 * 60 * 1000);
+      const p2 = (n: number): string => String(n).padStart(2, '0');
+      const ymd = `${m.getUTCFullYear()}-${p2(m.getUTCMonth() + 1)}-${p2(m.getUTCDate())}`;
+      const baseNum = Number(`${p2(m.getUTCDate())}${p2(m.getUTCHours())}${p2(m.getUTCMinutes())}`);
+
+      const lines: string[] = [];
+      const created: Array<{ entity: string; amount: number; redirect_url: string | null }> = [];
+      // ИП: ЕНП-платёж «на подпись» (счёт 40802). Проверено реальным запросом.
+      for (const [entity, payer, tax, income] of [
+        ['ИП', 'ip', ipTax, ipPnl.incomeTotal] as const,
+        ['ООО', 'ooo', oooTax, oooPnl.incomeTotal] as const,
+      ]) {
+        if (tax <= 0n) {
+          lines.push(`• ${entity}: налог 0 ₽ (нет дохода за ${period}) — платёж не нужен`);
+          continue;
+        }
+        const pay = await createTaxPaymentForSign({
+          payer,
+          amountRub: Number(tax) / 100,
+          paymentNumber: payer === 'ip' ? baseNum : baseNum + 1,
+          paymentDate: ymd,
+          purpose: `Единый налоговый платёж. АУСН 8% за ${period}`,
+        });
+        if (pay.ok) {
+          created.push({ entity, amount: Number(tax), redirect_url: pay.redirectUrl ?? null });
+          lines.push(
+            `• ${entity}: ${rubles(tax)} (доход ${rubles(income)}) — ✅ создан в Точке «на подпись»` +
+              (pay.redirectUrl ? ` · [подписать](${pay.redirectUrl})` : '')
+          );
+        } else {
+          const why = pay.noPaymentsScope ? 'у токена нет права «Платежи»' : pay.error ?? 'ошибка Точки';
+          lines.push(`• ${entity}: ${rubles(tax)} (доход ${rubles(income)}) — ⚠️ не создан (${why})`);
+        }
+      }
 
       return {
         ok: true,
@@ -551,11 +587,15 @@ async function executeIntent(intent: ParsedIntent, userId: string, telegramId: b
           ooo_income: Number(oooPnl.incomeTotal),
           ooo_tax: Number(oooTax),
           total_tax: Number(totalTax),
+          tochka_payment: created.length > 0,
+          created,
           note:
             `Налог АУСН 8% с валовых продаж за ${period} (включая «в пути», без вычета комиссии):\n` +
-            `• ИП: ${rubles(ipTax)} (доход ${rubles(ipPnl.incomeTotal)})\n` +
-            `• ООО: ${rubles(oooTax)} (доход ${rubles(oooPnl.incomeTotal)})\n` +
-            `Итого: ${rubles(totalTax)}. Платёж проведём через Точку — как подключим оплату из приложения. Срок АУСН — до 25 числа следующего месяца.`,
+            `${lines.join('\n')}\n` +
+            `Итого: ${rubles(totalTax)}.\n` +
+            (created.length > 0
+              ? `Платёж${created.length > 1 ? 'и' : ''} ждут подписи: Точка → «На подпись» → подтверди, тогда спишется. Срок АУСН — до 28 числа следующего месяца.`
+              : `Срок АУСН — до 28 числа следующего месяца.`),
         },
       };
     }
