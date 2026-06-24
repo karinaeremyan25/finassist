@@ -310,7 +310,7 @@ async function syncFundBalance(accountId: string, token: string): Promise<boolea
 
   const updated = await sql<{ id: string }[]>`
     UPDATE funds
-    SET balance = ${kop}, processing_kopecks = ${processing}
+    SET balance = ${kop}, processing_kopecks = ${processing}, updated_at = NOW()
     WHERE tochka_account_id = ${accountId}
       AND deleted_at IS NULL
     RETURNING id
