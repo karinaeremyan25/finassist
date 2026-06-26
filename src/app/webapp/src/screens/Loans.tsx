@@ -7,11 +7,29 @@ import { useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { SubHeader } from '../components/SubHeader';
 import { Skeleton, ErrorState, EmptyState } from '../components/States';
+import { TransactionDetail } from '../components/TransactionDetail';
 import { useAsync } from '../lib/useAsync';
 import { api } from '../lib/api';
 import { rubles } from '../lib/money';
 import { hapticSelection } from '../lib/telegram';
-import type { LoanCreditorRow } from '../lib/types';
+import type { LoanCreditorRow, LoanPaymentItem, TransactionItem } from '../lib/types';
+
+/** Платёж кредита → TransactionItem для общего bottom-sheet (просмотр + смена категории). */
+function toTxItem(p: LoanPaymentItem, creditor: string): TransactionItem {
+  return {
+    id: p.id,
+    date: p.date,
+    description: p.description ?? '',
+    // Платёж кредита — всегда расход: показываем со знаком минус.
+    amount: -Math.abs(p.amount),
+    direction: null,
+    category: 'Кредиты',
+    counterparty: creditor,
+    pnlCategory: 'loan',
+    isPersonal: false,
+    needsReview: false,
+  };
+}
 
 export function Loans() {
   const list = useAsync(() => api.loans(), []);
@@ -47,7 +65,7 @@ export function Loans() {
         ) : (
           <ul className="flex flex-col gap-3">
             {list.data.data.map((c) => (
-              <CreditorCard key={c.name} c={c} />
+              <CreditorCard key={c.name} c={c} onChanged={list.reload} />
             ))}
           </ul>
         )}
@@ -56,8 +74,9 @@ export function Loans() {
   );
 }
 
-function CreditorCard({ c }: { c: LoanCreditorRow }) {
+function CreditorCard({ c, onChanged }: { c: LoanCreditorRow; onChanged?: () => void }) {
   const [open, setOpen] = useState(false);
+  const [detail, setDetail] = useState<TransactionItem | null>(null);
   return (
     <li className="overflow-hidden rounded-md bg-surface-2">
       <button
@@ -86,18 +105,35 @@ function CreditorCard({ c }: { c: LoanCreditorRow }) {
       {open ? (
         <ul className="divide-y divide-border border-t border-border px-4">
           {c.payments.map((p) => (
-            <li key={p.id} className="flex items-baseline justify-between gap-3 py-2">
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-[13px] text-ink">{p.description ?? 'Платёж'}</span>
-                <span className="num block text-[11px] text-ink-faint">
-                  {p.date.slice(0, 10)}
-                  {p.tochka_transaction_id ? ' · чек Точки' : ''}
+            <li key={p.id}>
+              <button
+                type="button"
+                onClick={() => {
+                  hapticSelection();
+                  setDetail(toTxItem(p, c.name));
+                }}
+                className="flex w-full items-baseline justify-between gap-3 py-2 text-left active:bg-surface-3"
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] text-ink">{p.description ?? 'Платёж'}</span>
+                  <span className="num block text-[11px] text-ink-faint">
+                    {p.date.slice(0, 10)}
+                    {p.tochka_transaction_id ? ' · чек Точки' : ''} · изменить категорию →
+                  </span>
                 </span>
-              </span>
-              <span className="num shrink-0 text-[13px] font-semibold text-ink">{rubles(p.amount)}</span>
+                <span className="num shrink-0 text-[13px] font-semibold text-ink">{rubles(p.amount)}</span>
+              </button>
             </li>
           ))}
         </ul>
+      ) : null}
+
+      {detail ? (
+        <TransactionDetail
+          tx={detail}
+          onClose={() => setDetail(null)}
+          onChanged={onChanged}
+        />
       ) : null}
     </li>
   );

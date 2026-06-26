@@ -113,22 +113,24 @@ export function Dashboard() {
             <p className="mb-2 text-[13px] font-medium uppercase tracking-[0.04em] text-ink-muted">
               Деньги в пути
             </p>
-            {inTransit.data.income.in_transit > 0 ? (
-              <div className="flex items-center justify-between py-1">
-                <span className="text-[13px] text-ink">Поступления в пути (Продамус)</span>
-                <span className="num text-[15px] font-semibold" style={{ color: 'var(--income)' }}>
-                  +{rubles(inTransit.data.income.in_transit)}
-                </span>
-              </div>
-            ) : null}
-            {inTransit.data.expenses.in_transit > 0 ? (
-              <div className="flex items-center justify-between py-1">
-                <span className="text-[13px] text-ink">Расходы в обработке</span>
-                <span className="num text-[15px] font-semibold" style={{ color: 'var(--expense)' }}>
-                  −{rubles(inTransit.data.expenses.in_transit)}
-                </span>
-              </div>
-            ) : null}
+            <div className="flex items-center justify-between py-1">
+              <span className="text-[13px] text-ink">Поступления в пути</span>
+              <span
+                className="num text-[15px] font-semibold"
+                style={{ color: inTransit.data.income.in_transit > 0 ? 'var(--income)' : 'var(--text-faint)' }}
+              >
+                +{rubles(inTransit.data.income.in_transit)}
+              </span>
+            </div>
+            <div className="flex items-center justify-between py-1">
+              <span className="text-[13px] text-ink">Расходы в обработке</span>
+              <span
+                className="num text-[15px] font-semibold"
+                style={{ color: inTransit.data.expenses.in_transit > 0 ? 'var(--expense)' : 'var(--text-faint)' }}
+              >
+                −{rubles(inTransit.data.expenses.in_transit)}
+              </span>
+            </div>
             <p className="mt-1 text-[11px] text-ink-faint">
               Уже есть, но ещё не на счёте Точки. В налог не идут, пока не зачислены.
             </p>

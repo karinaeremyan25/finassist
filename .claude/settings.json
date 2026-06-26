@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:gate.lava.top)",
+      "Bash(sed -n \"/interface TransactionItem/,/^}/p\" src/app/webapp/src/lib/types.ts)",
+      "Bash(sed -n \"/LoanCreditorRow/,/^}/p\" src/app/webapp/src/lib/types.ts)"
+    ]
+  }
+}
