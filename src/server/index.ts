@@ -28,7 +28,6 @@ import { employeesHandler, employeeTransactionsHandler, employeesAnalyticsHandle
 import { contractorsHandler, contractorsSyncHandler, invoiceGenerateHandler } from './routes/contractors.js';
 import { aiCommandsHandler, aiCommandApproveHandler, aiAssistantHandler, aiTranscribeHandler, aiImportImageHandler, aiImportConfirmHandler } from './routes/aiCommands.js';
 import { loansListHandler } from './routes/loans.js';
-import { lavaProbeHandler } from './routes/lavaProbe.js';
 
 export function buildRouter(): Router {
   const router = new Router();
@@ -52,8 +51,6 @@ export function buildRouter(): Router {
   // Vercel Cron дёргает путь методом GET — регистрируем и его (та же авторизация
   // по CRON_SECRET внутри handler).
   router.add('GET', '/api/tochka/sync', tochkaSyncHandler);
-  // ВРЕМЕННО: проба API Lava (выяснить эндпоинты «в проверке»). Удалить после.
-  router.add('GET', '/api/lava/probe', lavaProbeHandler);
 
   // Mini App session
   router.post('/api/webapp/session', sessionHandler);
