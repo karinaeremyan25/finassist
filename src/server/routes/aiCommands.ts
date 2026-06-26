@@ -55,6 +55,9 @@ const ParsedIntentSchema = z.object({
   to_category: z.string().nullish(),
   keyword: z.string().nullish(),
   is_tax: z.boolean().default(false),
+  // Телефон получателя, если оплата физлицу по номеру (это перевод по СБП,
+  // а не платёжка по реквизитам). Только цифры/«+».
+  payee_phone: z.string().nullish(),
   answer: z.string().nullish(),
   preview: z.string(),
   needs_clarification: z.boolean().default(false),
@@ -66,20 +69,23 @@ const SYSTEM_PROMPT = `Ты — оркестратор финансовых ко
 
 Типы намерений (type):
 - create_invoice — выставить счёт контрагенту (только ООО). Поля: contractor_name, amount_rub, description.
-- create_payment — платёжное поручение: оплата контрагенту/сотруднику/сервису ИЛИ налог.
-    Поля: contractor_name (кому платим — ФИО/название; для налога не нужно), amount_rub (сумма), description (назначение платежа), is_tax (true если это налог/ФНС/ЕНП).
-    Примеры: «сформируй платёжку для Петровой на 30000 за бухуслуги» → contractor_name="Петрова", amount_rub=30000, description="бухгалтерские услуги", is_tax=false.
+- create_payment — оплата контрагенту/сотруднику/сервису ИЛИ налог ИЛИ перевод физлицу по телефону (СБП).
+    Поля: contractor_name (кому платим — ФИО/название; для налога не нужно), amount_rub (сумма), description (назначение платежа), is_tax (true если это налог/ФНС/ЕНП), payee_phone (номер телефона получателя, ТОЛЬКО если перевод физлицу по номеру/«по СБП»).
+    Примеры: «сформируй платёжку для Петровой на 30000 за бухуслуги» → contractor_name="Петрова", amount_rub=30000, description="бухгалтерские услуги".
+    «переведи Ивану по СБП на телефон +79991234567 5000» → contractor_name="Иван", amount_rub=5000, payee_phone="+79991234567".
+    «отправь физлицу по номеру 89161112233 тысячу» → amount_rub=1000, payee_phone="89161112233".
     «платёжка в ФНС на налог» → is_tax=true.
+    ВАЖНО: если есть номер телефона / сказано «по СБП»/«по номеру» — ВСЕГДА заполняй payee_phone (это перевод по СБП, не платёжка по реквизитам).
 - reclassify — переместить операции в другую категорию расходов. Поля: to_category (одно из: payroll, marketing, loan, subscriptions, tax, payment_commission, other_business), keyword (по какому признаку: имя/назначение, например «коммунизм»).
 - query — вопрос об аналитике/состоянии. Поле answer НЕ заполняй.
 - unknown — не удалось понять.
 
 Суммы: amount_rub — число в РУБЛЯХ (не копейки). «25K»/«25к» = 25000. «1.5 млн» = 1500000.
-needs_clarification=true, если не хватает обязательного поля. Для create_payment (не налог) обязательны contractor_name и amount_rub — если чего-то нет, needs_clarification=true и в preview спроси недостающее («На какую сумму платёжка для Петровой?»).
+needs_clarification=true, если не хватает обязательного поля. Для create_payment (не налог) нужны: сумма amount_rub И (contractor_name ИЛИ payee_phone). Если перевод по телефону — достаточно payee_phone + amount_rub (имя необязательно). Если чего-то нет — needs_clarification=true и в preview спроси недостающее.
 preview — короткая фраза-подтверждение/уточнение на русском.
 
 Верни ТОЛЬКО JSON-объект:
-{"type":"...","contractor_name":null,"amount_rub":null,"description":null,"to_category":null,"keyword":null,"is_tax":false,"preview":"...","needs_clarification":false}`;
+{"type":"...","contractor_name":null,"amount_rub":null,"description":null,"to_category":null,"keyword":null,"is_tax":false,"payee_phone":null,"preview":"...","needs_clarification":false}`;
 
 async function parseIntent(commandText: string, history?: string): Promise<ParsedIntent> {
   const userContent = history
@@ -596,6 +602,32 @@ async function executeIntent(intent: ParsedIntent, userId: string, telegramId: b
             (created.length > 0
               ? `Платёж${created.length > 1 ? 'и' : ''} ждут подписи: Точка → «На подпись» → подтверди, тогда спишется. Срок АУСН — до 28 числа следующего месяца.`
               : `Срок АУСН — до 28 числа следующего месяца.`),
+        },
+      };
+    }
+
+    // (Б0) ПЕРЕВОД ПО СБП НА ТЕЛЕФОН (физлицо по номеру). Исходящие СБП-переводы
+    // банк по API не отдаёт (API Точки = только приём СБП/QR + платёжки по р/с).
+    // Поэтому честно: платёжку не делаем (для номера нет р/с), а отдаём готовые
+    // данные, чтобы провести перевод в приложении Точки → СБП.
+    const phone = intent.payee_phone?.replace(/[^\d+]/g, '') ?? null;
+    if (phone && phone.replace(/\D/g, '').length >= 10) {
+      if (intent.amount_rub == null) {
+        return { ok: false, payload: { note: 'Не хватает суммы перевода' } };
+      }
+      const amt = toKopecks(intent.amount_rub);
+      const who = intent.contractor_name ? `${intent.contractor_name} ` : '';
+      return {
+        ok: true,
+        payload: {
+          sbp_phone: phone,
+          payee: intent.contractor_name ?? null,
+          amount: Number(amt),
+          note:
+            `Это перевод по СБП на телефон ${phone} — банк такие исходящие переводы по API не отдаёт, ` +
+            `платёжку тут не сделать (для номера нет р/с). Проведи в приложении Точки:\n` +
+            `СБП → перевод по номеру → ${phone} ${who}→ сумма ${rubles(amt)}.\n` +
+            `Если нужен именно банковский платёж — пришли р/с и БИК получателя, тогда сформирую платёжку.`,
         },
       };
     }
