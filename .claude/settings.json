@@ -3,7 +3,10 @@
     "allow": [
       "WebFetch(domain:gate.lava.top)",
       "Bash(sed -n \"/interface TransactionItem/,/^}/p\" src/app/webapp/src/lib/types.ts)",
-      "Bash(sed -n \"/LoanCreditorRow/,/^}/p\" src/app/webapp/src/lib/types.ts)"
+      "Bash(sed -n \"/LoanCreditorRow/,/^}/p\" src/app/webapp/src/lib/types.ts)",
+      "Bash(node -e 'let s=\"\";process.stdin.on\\(\"data\",d=>s+=d\\).on\\(\"end\",\\(\\)=>{try{const j=JSON.parse\\(s\\);const envs=j.envs||j;console.log\\(\"ENV ключи в Vercel:\"\\);for\\(const e of envs\\){if\\(/lava/i.test\\(e.key\\)\\) console.log\\(\"  ★\",e.key,\"|\",e.target?.join\\(\",\"\\)\\); }console.log\\(\"--- все ключи ---\"\\);console.log\\(envs.map\\(e=>e.key\\).join\\(\", \"\\)\\);}catch\\(e\\){console.log\\(s.slice\\(0,400\\)\\);}}\\)')",
+      "Bash(node -e 'let s=\"\";process.stdin.on\\(\"data\",d=>s+=d\\).on\\(\"end\",\\(\\)=>{try{const j=JSON.parse\\(s\\);const e=\\(j.envs||j\\).find\\(x=>x.key===\"LAVA_WEBHOOK_SECRET\"\\);console.log\\(\"LAVA secret len:\", e?.value?.length, \"head:\", e?.value?.slice\\(0,6\\)\\);process.env._LV=e?.value||\"\";require\\(\"fs\"\\).writeFileSync\\(\"/tmp/lava_key.txt\", e?.value||\"\"\\);}catch\\(e\\){console.log\\(\"ERR\",s.slice\\(0,200\\)\\);}}\\)')",
+      "Bash(node -e 'let s=\"\";process.stdin.on\\(\"data\",d=>s+=d\\).on\\(\"end\",\\(\\)=>{try{const j=JSON.parse\\(s\\);console.log\\(\"type:\",j.type,\"| value len:\",j.value?String\\(j.value\\).length:0,\"| head:\",j.value?String\\(j.value\\).slice\\(0,8\\):\"\\(пусто\\)\"\\);}catch\\(e\\){console.log\\(s.slice\\(0,200\\)\\);}}\\)')"
     ]
   }
 }
