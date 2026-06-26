@@ -313,6 +313,68 @@ export async function getIncomeBreakdown(
   return Array.from(bySource.values()).sort((a, b) => (a.total < b.total ? 1 : -1));
 }
 
+// ── getExpenseTransactions (раскрытие статьи расходов: какие транзакции) ────
+
+export interface ExpenseTxItem {
+  id: string;
+  occurredAt: string;
+  amount: bigint;
+  counterparty: string | null;
+  description: string | null;
+  pnlCategory: string | null;
+}
+
+/**
+ * Расходные операции одной статьи (pnl_category) за месяц — чтобы на P&L раскрыть
+ * «из чего сложилась» сумма ФОТ/Маркетинг/Прочее и т.п. и переклассифицировать.
+ * Категория 'other_business' включает и операции без pnl_category (NULL).
+ * Для 'tax' транзакций нет (налог расчётный) — вернётся пустой список.
+ */
+export async function getExpenseTransactions(
+  period: string,
+  entityIds: string[] | null,
+  category: string
+): Promise<ExpenseTxItem[]> {
+  const { dateFrom, dateTo } = monthBoundaries(period);
+  const entityFilter = entityIds !== null ? sql`AND t.entity_id = ANY(${entityIds})` : sql``;
+  // «Прочее» = явный other_business ИЛИ пустая категория.
+  const categoryFilter =
+    category === 'other_business'
+      ? sql`AND (t.pnl_category = 'other_business' OR t.pnl_category IS NULL)`
+      : sql`AND t.pnl_category = ${category}`;
+
+  const rows = await sql<{
+    id: string;
+    occurred_at: string;
+    amount: bigint;
+    counterparty: string | null;
+    description: string | null;
+    pnl_category: string | null;
+  }[]>`
+    SELECT t.id, t.occurred_at::text AS occurred_at, t.amount_rub AS amount,
+           t.counterparty, t.description, t.pnl_category
+    FROM transactions t
+    WHERE t.deleted_at IS NULL
+      AND t.flow_type = 'expense'
+      AND (t.is_personal = false OR t.is_personal IS NULL)
+      AND t.occurred_at >= ${dateFrom}
+      AND t.occurred_at < ${dateTo}
+      ${categoryFilter}
+      ${entityFilter}
+    ORDER BY t.amount_rub DESC
+    LIMIT 1000
+  `;
+
+  return rows.map((r) => ({
+    id: r.id,
+    occurredAt: r.occurred_at,
+    amount: r.amount,
+    counterparty: r.counterparty,
+    description: r.description,
+    pnlCategory: r.pnl_category,
+  }));
+}
+
 // ── getInTransitTotals (US-104: деньги в пути) ────────────────────────────
 
 export interface InTransitTotals {

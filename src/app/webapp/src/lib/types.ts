@@ -276,6 +276,20 @@ export interface IncomeBreakdownResponse {
   sources: IncomeBreakdownSource[];
 }
 
+/** Одна транзакция в раскрытии статьи расходов (ФОТ/Прочее/…). */
+export interface ExpenseBreakdownItem {
+  id: string;
+  date: string;
+  amount: number;
+  counterparty: string | null;
+  description: string | null;
+  pnl_category: string | null;
+}
+export interface ExpenseBreakdownResponse {
+  category: string;
+  items: ExpenseBreakdownItem[];
+}
+
 export interface SetTxCategoryResponse {
   id: string;
   category: string;

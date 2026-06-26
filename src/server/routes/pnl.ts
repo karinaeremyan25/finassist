@@ -22,6 +22,7 @@ import {
   getPersonalSpending,
   getInTransitTotals,
   getIncomeBreakdown,
+  getExpenseTransactions,
   updateTxCategory,
   prevMonth,
   monthBoundaries,
@@ -62,6 +63,12 @@ const YearSchema = z.coerce
 const PnlQuerySchema = z.object({
   entity: EntitySchema,
   period: PeriodSchema,
+});
+
+const ExpenseTxQuerySchema = z.object({
+  entity: EntitySchema,
+  period: PeriodSchema,
+  category: z.string().min(1).max(40),
 });
 
 const YearPnlQuerySchema = z.object({
@@ -500,6 +507,46 @@ export const incomeBreakdownHandler: ApiHandler = async (req): Promise<ApiRespon
     if (err instanceof WebAppAuthError) return unauthorizedResponse(err.reason);
     log.error({ err, handler: 'income_breakdown', latency_ms: Date.now() - start }, 'income_breakdown_error');
     return { status: 200, body: { sources: [] } };
+  }
+};
+
+// ── GET /api/analytics/expense-breakdown — раскрытие статьи расходов ────────
+// Какие транзакции стоят за суммой ФОТ/Маркетинг/Прочее/Налог — для проверки и
+// переклассификации (напр. «это на самом деле ФОТ»).
+
+export const expenseBreakdownHandler: ApiHandler = async (req): Promise<ApiResponse> => {
+  const start = Date.now();
+  try {
+    const user = await resolveWebAppUser(req);
+    const parsed = ExpenseTxQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return invalidRequest(parsed.error.errors[0]?.message ?? 'Нужны entity, period, category');
+    }
+    const { entity, period, category } = parsed.data;
+    const items = await getExpenseTransactions(period, resolveEntityIds(entity), category);
+
+    log.info(
+      { telegram_id: user.telegramId.toString(), handler: 'expense_breakdown', entity, period, category, count: items.length, latency_ms: Date.now() - start },
+      'expense_breakdown_ok'
+    );
+    return {
+      status: 200,
+      body: {
+        category,
+        items: items.map((i) => ({
+          id: i.id,
+          date: i.occurredAt,
+          amount: i.amount,
+          counterparty: i.counterparty,
+          description: i.description,
+          pnl_category: i.pnlCategory,
+        })),
+      },
+    };
+  } catch (err) {
+    if (err instanceof WebAppAuthError) return unauthorizedResponse(err.reason);
+    log.error({ err, handler: 'expense_breakdown', latency_ms: Date.now() - start }, 'expense_breakdown_error');
+    return { status: 200, body: { category: '', items: [] } };
   }
 };
 

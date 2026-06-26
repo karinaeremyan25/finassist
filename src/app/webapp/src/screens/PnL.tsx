@@ -9,6 +9,7 @@ import { useMemo, useState } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   ArrowUp,
   ArrowDown,
   ArrowRight,
@@ -25,6 +26,7 @@ import {
 import { Header } from '../components/Header';
 import { SectionHeader } from '../components/AppLayout';
 import { Skeleton, ErrorState, EmptyState } from '../components/States';
+import { TransactionDetail } from '../components/TransactionDetail';
 import { useAsync } from '../lib/useAsync';
 import { api } from '../lib/api';
 import { rubles, rublesCompact, rublesSigned, percentSigned } from '../lib/money';
@@ -42,6 +44,8 @@ import type {
   PnlYearMonth,
   PnlIncomeSources,
   PnlExpenseBreakdown,
+  ExpenseBreakdownItem,
+  TransactionItem,
 } from '../lib/types';
 
 type TabKey = 'ip' | 'ooo' | 'total' | 'year';
@@ -270,7 +274,7 @@ function MonthView({ entity, month }: { entity: PnlEntity; month: string }) {
       {entity === 'total' ? <EntityProfitSummary month={month} /> : null}
       <InTransitBlock entity={entity} month={month} />
       <IncomeBlock data={data} entity={entity} period={month} />
-      <ExpenseBlock data={data} />
+      <ExpenseBlock data={data} entity={entity} period={month} />
       <NetProfitBlock data={data} />
       <PersonalBlock
         total={personal.status === 'success' ? personal.data?.total ?? 0 : 0}
@@ -550,13 +554,15 @@ function IncomeBreakdown({ entity, period }: { entity: PnlEntity; period: string
   );
 }
 
-function ExpenseBlock({ data }: { data: PnlResponse }) {
+function ExpenseBlock({ data, entity, period }: { data: PnlResponse; entity: PnlEntity; period: string }) {
   const total = data.expenses.total;
   const rows = EXPENSE_LABELS.map((e) => ({
+    key: e.key as string,
     label: e.label,
     amount: data.expenses.breakdown[e.key],
   })).filter(
-    (r): r is { label: string; amount: number } => typeof r.amount === 'number' && r.amount !== 0
+    (r): r is { key: string; label: string; amount: number } =>
+      typeof r.amount === 'number' && r.amount !== 0
   );
 
   return (
@@ -566,12 +572,14 @@ function ExpenseBlock({ data }: { data: PnlResponse }) {
         {rows.length > 0 ? (
           <ul className="divide-y divide-border">
             {rows.map((r) => (
-              <LineRow
-                key={r.label}
+              <ExpenseRow
+                key={r.key}
+                catKey={r.key}
                 label={r.label}
                 amount={r.amount}
                 pct={total > 0 ? (r.amount / total) * 100 : 0}
-                color="var(--expense)"
+                entity={entity}
+                period={period}
               />
             ))}
           </ul>
@@ -589,6 +597,120 @@ function ExpenseBlock({ data }: { data: PnlResponse }) {
       </div>
     </div>
   );
+}
+
+/** Строка статьи расходов: тап → раскрытие транзакций этой категории. */
+function ExpenseRow({
+  catKey,
+  label,
+  amount,
+  pct,
+  entity,
+  period,
+}: {
+  catKey: string;
+  label: string;
+  amount: number;
+  pct: number;
+  entity: PnlEntity;
+  period: string;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={() => {
+          hapticSelection();
+          setOpen((v) => !v);
+        }}
+        className="flex w-full items-baseline justify-between gap-3 py-2.5 text-left active:opacity-70"
+        aria-expanded={open}
+      >
+        <span className="min-w-0 flex-1 truncate text-[14px] text-ink">{label}</span>
+        <span className="num shrink-0 text-[12px] text-ink-faint">{Math.round(pct)}%</span>
+        <span className="num shrink-0 text-[14px] font-semibold" style={{ color: 'var(--expense)' }}>
+          {rubles(amount)}
+        </span>
+        {open ? (
+          <ChevronDown size={15} className="shrink-0 text-ink-faint" />
+        ) : (
+          <ChevronRight size={15} className="shrink-0 text-ink-faint" />
+        )}
+      </button>
+      {open ? <ExpenseDrill catKey={catKey} entity={entity} period={period} /> : null}
+    </li>
+  );
+}
+
+/** Транзакции одной статьи расходов: клик по операции → сменить категорию. */
+function ExpenseDrill({ catKey, entity, period }: { catKey: string; entity: PnlEntity; period: string }) {
+  const bd = useAsync(() => api.expenseBreakdown(entity, period, catKey), [entity, period, catKey]);
+  const [detail, setDetail] = useState<TransactionItem | null>(null);
+
+  if (catKey === 'tax') {
+    return (
+      <p className="pb-2 text-[12px] text-ink-faint">
+        Налог расчётный (8% от дохода АУСН) — отдельных операций нет.
+      </p>
+    );
+  }
+  if (bd.status === 'loading') return <Skeleton className="mb-2 h-16 w-full rounded-md" />;
+  if (bd.status === 'error') return <ErrorState message={bd.error ?? undefined} onRetry={bd.reload} />;
+  if (!bd.data || bd.data.items.length === 0)
+    return <p className="pb-2 text-[12px] text-ink-faint">Операций нет.</p>;
+
+  return (
+    <div className="mb-2 rounded-md bg-surface-1 px-3">
+      <ul className="divide-y divide-border">
+        {bd.data.items.slice(0, 100).map((i) => (
+          <li key={i.id}>
+            <button
+              type="button"
+              onClick={() => {
+                hapticSelection();
+                setDetail(toExpenseTxItem(i));
+              }}
+              className="flex w-full items-baseline justify-between gap-3 py-2 text-left active:opacity-70"
+            >
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[12px] text-ink">
+                  {i.counterparty ?? i.description ?? 'Операция'}
+                </span>
+                <span className="num block text-[10px] text-ink-faint">
+                  {i.date.slice(0, 10)} · сменить категорию →
+                </span>
+              </span>
+              <span className="num shrink-0 text-[12px] text-ink">{rubles(i.amount)}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+      {bd.data.items.length > 100 ? (
+        <p className="py-1 text-[11px] text-ink-faint">…и ещё {bd.data.items.length - 100}</p>
+      ) : null}
+      {detail ? (
+        <TransactionDetail tx={detail} onClose={() => setDetail(null)} onChanged={bd.reload} />
+      ) : null}
+    </div>
+  );
+}
+
+/** ExpenseBreakdownItem → TransactionItem для общего bottom-sheet. */
+function toExpenseTxItem(i: ExpenseBreakdownItem): TransactionItem {
+  return {
+    id: i.id,
+    date: i.date,
+    description: i.description ?? '',
+    // Расход — со знаком минус (как ожидает TransactionDetail).
+    amount: -Math.abs(i.amount),
+    direction: null,
+    category: i.pnl_category ?? '',
+    counterparty: i.counterparty,
+    pnlCategory: i.pnl_category,
+    isPersonal: false,
+    needsReview: false,
+  };
 }
 
 function NetProfitBlock({ data }: { data: PnlResponse }) {
