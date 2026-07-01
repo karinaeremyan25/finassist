@@ -44,9 +44,11 @@ const DIRECTION_DPO_ID = 'b17eb69e-4bd3-441f-8a0c-57734d56840c';
 const DIRECTION_METANOIA_ID = 'ac773f21-0f0d-4772-8baf-15cac941c122';
 
 /**
- * Доп-счёт ИП = карта Натальи Скрипниковой (её зарплата). Все ТРАТЫ с этой
- * карты учитываем как ФОТ (зарплата Наташи), без жёлтого флага. Сам счёт скрыт
- * из «Денег на ИП». Сравниваем по номеру счёта (без БИК).
+ * Доп-счёт ИП = карта Натальи Скрипниковой. Модель (по просьбе владельца):
+ * — ПЕРЕВОД на эту карту = расход ФОТ (зарплата Наташи), фиксируем сразу.
+ * — ЛИЧНЫЕ ТРАТЫ с самой карты НЕ тянем и не показываем (её лимит, не наш учёт).
+ * Поэтому выписку доп-счёта в синке пропускаем целиком, а перевод ей ловим на
+ * счёте-отправителе (Debit с получателем = этот номер). Сравнение — по номеру.
  */
 const NATASHA_CARD_ACCOUNT = '40802810420000644796';
 
@@ -469,15 +471,17 @@ async function insertTransaction(
     needsReview = true;
   }
 
-  // Траты с карты Наташи (доп-счёт ИП) → ФОТ (зарплата Наташи), без жёлтого.
+  // Перевод НА карту Наташи (Debit, получатель = доп-счёт ИП) → ФОТ (её ЗП),
+  // без жёлтого флага. Личные траты с самой карты не тянем вовсе (см. цикл синка).
   let counterpartyOut = who;
   let descOut = desc;
-  if (!isCredit && accountId.split('/')[0] === NATASHA_CARD_ACCOUNT) {
+  const creditorNum = (tx.CreditorAccount?.identification ?? '').split('/')[0] ?? '';
+  if (!isCredit && creditorNum === NATASHA_CARD_ACCOUNT) {
     pnlCategory = 'payroll';
     needsClassification = false;
     needsReview = false;
     counterpartyOut = 'Наташа Скрипникова (ЗП)';
-    descOut = ('Наташа Скрипникова (ЗП)' + (desc ? ' · ' + desc : '')).slice(0, 300);
+    descOut = 'Наташа Скрипникова (ЗП)';
   }
 
   // Резолвим category_id по коду (ПОСЛЕДОВАТЕЛЬНО)
@@ -679,6 +683,11 @@ export async function syncTochka(
     const balUpdated = await syncFundBalance(accountId, token);
     if (balUpdated) balancesUpdated++;
 
+    // Карту Наташи (доп-счёт ИП) НЕ тянем: её личные траты не учитываем и не
+    // показываем. Зарплата Наташи = перевод ЕЙ на карту — он ловится ниже на
+    // счёте-отправителе (Debit с получателем = этот доп-счёт) как ФОТ.
+    if (accountNumber(accountId) === NATASHA_CARD_ACCOUNT) continue;
+
     // Шаг 3: выписка
     let txItems: TxItem[] | null;
     try {
@@ -703,8 +712,14 @@ export async function syncTochka(
 
     // Шаги 4+5: фильтрация и вставка
     for (const tx of txItems) {
-      // Пропускаем внутренние переводы
-      if (isOwn(tx, myNums)) continue;
+      // Перевод на карту Наташи (Debit, получатель = доп-счёт) — это её ЗП,
+      // НЕ считаем внутренним переводом (иначе бы пропустили) → пойдёт в ФОТ.
+      const creditorNum = (tx.CreditorAccount?.identification ?? '').split('/')[0] ?? '';
+      const toNatashaCard =
+        tx.creditDebitIndicator === 'Debit' && creditorNum === NATASHA_CARD_ACCOUNT;
+
+      // Пропускаем внутренние переводы (кроме перевода на карту Наташи = ЗП)
+      if (isOwn(tx, myNums) && !toNatashaCard) continue;
 
       // Пропускаем ЗАЧИСЛЕНИЯ от Продамуса: доход Продамуса учитывается
       // по каждой продаже (вебхук/выгрузка) с разбивкой ДПО→ООО / клуб→ИП.
