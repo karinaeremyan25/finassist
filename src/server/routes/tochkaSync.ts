@@ -18,6 +18,7 @@
 import { createHash } from 'node:crypto';
 import { config } from '../../config.js';
 import { syncTochka } from '../../services/integrations/tochkaSync.js';
+import { checkSilentSources } from '../../services/sourceWatchdog.js';
 import { resolveWebAppUser, unauthorizedResponse, WebAppAuthError } from '../auth.js';
 import { childLogger } from '../../utils/logger.js';
 import type { ApiHandler, ApiResponse } from '../http.js';
@@ -68,6 +69,21 @@ export const tochkaSyncHandler: ApiHandler = async (req): Promise<ApiResponse> =
 
   try {
     const result = await syncTochka();
+
+    // Попутно (только для крон-запусков) проверяем «молчащие» источники и шлём
+    // алерт владельцу/бухгалтерам. В отдельном try/catch — сторож не должен
+    // ронять ответ синка. Throttle внутри (раз в 3 дня на источник) не даёт спамить.
+    if (isCronRequest) {
+      try {
+        const wd = await checkSilentSources();
+        log.info(
+          { handler: 'tochka_sync', watchdog_alerted: wd.alerted, watchdog_silent: wd.silent },
+          'source_watchdog_piggyback'
+        );
+      } catch (wdErr) {
+        log.error({ handler: 'tochka_sync', error: String(wdErr) }, 'source_watchdog_piggyback_failed');
+      }
+    }
 
     log.info(
       {

@@ -14,6 +14,7 @@ import { robokassaWebhookHandler, prodamusWebhookHandler, lavaWebhookHandler } f
 import { fundsHandler } from './routes/funds.js';
 import { tochkaCallbackHandler } from './routes/tochka.js';
 import { tochkaSyncHandler } from './routes/tochkaSync.js';
+import { sourceWatchdogHandler } from './routes/sourceWatchdog.js';
 import { adminUsersHandler } from './routes/admin.js';
 import { planHandler } from './routes/plan.js';
 import {
@@ -52,6 +53,13 @@ export function buildRouter(): Router {
   // Vercel Cron дёргает путь методом GET — регистрируем и его (та же авторизация
   // по CRON_SECRET внутри handler).
   router.add('GET', '/api/tochka/sync', tochkaSyncHandler);
+
+  // ── Сторож молчания источников ────────────────────────────────────────────
+  // На Hobby-плане Vercel лимит 2 крон-джоба (оба заняты синком Точки 2×/день),
+  // поэтому сторож дёргается ПОПУТНО из tochkaSyncHandler. Этот роут оставлен
+  // для ручного запуска/проверки (?key= sha256(BOT_TOKEN) или Bearer CRON_SECRET).
+  router.add('GET', '/api/cron/source-watchdog', sourceWatchdogHandler);
+  router.add('POST', '/api/cron/source-watchdog', sourceWatchdogHandler);
 
   // Mini App session
   router.post('/api/webapp/session', sessionHandler);
