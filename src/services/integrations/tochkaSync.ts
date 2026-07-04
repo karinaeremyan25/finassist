@@ -431,6 +431,22 @@ async function insertTransaction(
   }
   const kop = BigInt(Math.round(rub * 100));
 
+  // Комиссия эквайринга: в приходных зачислениях по терминалу банк указывает
+  // СПРАВОЧНО удержанную комиссию («…Справочно: сумма комиссии 1579.9 руб.…»).
+  // Модель как у Продамуса: доход = ВАЛОВЫЙ (зачисление + комиссия), а комиссию
+  // проводим отдельным расходом payment_commission — чтобы видеть валовую выручку
+  // (для расчёта ЗП) и уплаченную комиссию. Зачисления по QR/СБП и прямые B2B
+  // комиссию справочно не содержат — остаются как есть (income = зачисление).
+  let commissionKop = 0n;
+  if (isCredit) {
+    const m = /Справочно:\s*сумма комиссии\s*(\d+(?:[.,]\d+)?)\s*руб/i.exec(tx.description ?? '');
+    if (m?.[1]) {
+      const cRub = Number(m[1].replace(',', '.'));
+      if (cRub > 0) commissionKop = BigInt(Math.round(cRub * 100));
+    }
+  }
+  const incomeKop = kop + commissionKop; // валовый доход (зачисление + комиссия)
+
   // Дата: documentProcessDate из поля Точки, иначе bookingDateTime, иначе today
   const dateRaw = tx.documentProcessDate ?? tx.bookingDateTime;
   const occurredAt = dateRaw
@@ -502,9 +518,9 @@ async function insertTransaction(
       verified, needs_classification, needs_review, needs_owner_review
     ) VALUES (
       ${flowType},
-      ${kop},
+      ${isCredit ? incomeKop : kop},
       'RUB',
-      ${kop},
+      ${isCredit ? incomeKop : kop},
       NULL,
       ${entityId},
       ${directionId},
@@ -528,6 +544,29 @@ async function insertTransaction(
 
   const inserted = rows[0] !== undefined;
   const id = rows[0]?.id ?? '';
+
+  // Комиссия эквайринга — отдельный расход payment_commission (только если доход
+  // реально вставлен). external_id с суффиксом _comm для дедупа/идемпотентности.
+  if (inserted && commissionKop > 0n) {
+    await sql`
+      INSERT INTO transactions (
+        flow_type, amount, currency, amount_rub, fx_rate,
+        entity_id, direction_id, category_id, source_id,
+        occurred_at, description, counterparty, pnl_category,
+        external_id, created_by,
+        verified, needs_classification, needs_review, needs_owner_review
+      ) VALUES (
+        'expense', ${commissionKop}, 'RUB', ${commissionKop}, NULL,
+        ${entityId}, NULL, NULL, ${sourceId},
+        ${occTs}, ${'Комиссия эквайринга (Точка)'}, ${'Комиссия эквайринга Точки'}, 'payment_commission',
+        ${`${externalId}_comm`}, ${createdBy},
+        false, false, false, false
+      )
+      ON CONFLICT (external_id) WHERE external_id IS NOT NULL AND deleted_at IS NULL
+      DO NOTHING
+    `;
+  }
+
   return { id, flowType, wasInserted: inserted };
 }
 
