@@ -753,7 +753,9 @@ export async function syncTochka(
   }
 
   // Деньги в пути: если пришла выплата Продамуса — продажи прошлых дней дошли.
-  // Переводим pending-доход Продамуса с occurred_at < сегодня в completed.
+  // Переводим pending-операции Продамуса с occurred_at < сегодня в completed:
+  // и валовый доход, и удержанную комиссию (payment_commission) — они оседают
+  // вместе в момент выплаты на Точку.
   // Сегодняшние продажи остаются «в пути» (зачисление обычно на следующие сутки).
   if (prodamusPayoutSeen) {
     try {
@@ -761,7 +763,6 @@ export async function syncTochka(
         UPDATE transactions
         SET tx_status = 'completed', updated_at = NOW()
         WHERE deleted_at IS NULL
-          AND flow_type = 'income'
           AND tx_status = 'pending'
           AND source_id = (SELECT id FROM sources WHERE code = 'prodamus')
           AND occurred_at < ${today}

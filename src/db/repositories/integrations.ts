@@ -229,6 +229,13 @@ export interface InsertSyncTransactionsInput {
   flowType: 'income' | 'expense';
   /** Статус операции: 'completed' (по умолч.) | 'pending' (деньги в пути) | 'returned'. */
   txStatus?: 'completed' | 'pending' | 'returned';
+  /**
+   * pnl_category для P&L-разбивки (например 'payment_commission' для комиссии
+   * эквайринга). Если не задано — колонка остаётся NULL (классифицируется позже).
+   */
+  pnlCategory?: string | null;
+  /** counterparty — контрагент для отображения (например 'Комиссия Продамуса'). */
+  counterparty?: string | null;
 }
 
 const InsertSyncInputSchema = z.object({
@@ -252,6 +259,8 @@ const InsertSyncInputSchema = z.object({
   // Статус операции: 'completed' (в выписке) | 'pending' (деньги в пути —
   // напр. продажа в Продамусе ещё не зачислена в Точку). По умолчанию completed.
   txStatus: z.enum(['completed', 'pending', 'returned']).default('completed'),
+  pnlCategory: z.string().nullable().optional(),
+  counterparty: z.string().nullable().optional(),
 });
 
 /**
@@ -320,7 +329,7 @@ export async function insertSyncTransactions(
         entity_id, direction_id, category_id, source_id,
         occurred_at, description, external_id,
         created_by, verified, needs_classification, needs_owner_review,
-        tx_status, raw_ai_response
+        tx_status, pnl_category, counterparty, raw_ai_response
       ) VALUES (
         ${data.flowType},
         ${tx.amount},
@@ -339,6 +348,8 @@ export async function insertSyncTransactions(
         ${needsClassification},
         false,
         ${data.txStatus},
+        ${data.pnlCategory ?? null},
+        ${data.counterparty ?? null},
         ${/* rawPayload — валидный JSON-объект (Zod-проверен выше); sql.json ждёт JsonValue */ sql.json(tx.rawPayload as never)}
       )
       ON CONFLICT (external_id) WHERE external_id IS NOT NULL AND deleted_at IS NULL

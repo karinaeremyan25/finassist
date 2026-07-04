@@ -88,6 +88,12 @@ export const ProdamusWebhookSchema = z.object({
   products: z.array(ProdamusProductSchema).default([]),
   customer_email: z.string().optional(),
   customer_phone: z.string().optional(),
+  // Комиссия эквайринга Продамуса. sum — ВАЛОВАЯ сумма заказа (то, что заплатил
+  // клиент). commission — процент, commission_sum — сумма комиссии в рублях.
+  // Бухгалтерия: доход = sum (валовый, для расчёта ЗП продавцам), а comission_sum
+  // проводим отдельным расходом 'payment_commission', чтобы видеть уплаченную комиссию.
+  commission: z.union([z.string(), z.number()]).transform(String).optional(),
+  commission_sum: z.union([z.string(), z.number()]).transform(String).optional(),
 }).passthrough();
 
 export type ProdamusWebhookPayload = z.infer<typeof ProdamusWebhookSchema>;
@@ -358,7 +364,54 @@ export async function handleProdamusWebhook(
     txStatus: 'pending',
   });
 
-  log.info({ source: 'prodamus', inserted, products_count: payload.products.length }, 'prodamus_webhook_processed');
+  // ── Комиссия эквайринга Продамуса — отдельный расход ────────────────────
+  // Бухгалтерия (обратная связь 04.07.2026): доход зачисляем ВАЛОВЫЙ (sum),
+  // а уплаченную комиссию проводим отдельным расходом 'payment_commission',
+  // чтобы её было видно в P&L. Пример: продажа 5000 → доход 5000 + расход 155.
+  let commissionInserted = 0;
+  const commissionRaw = payload.commission_sum;
+  if (commissionRaw !== undefined && commissionRaw !== '' && commissionRaw !== '0') {
+    try {
+      const commissionAmount = toKopecks(commissionRaw);
+      if (commissionAmount > 0n) {
+        const commTx: RawSourceTransaction = {
+          externalId: `prodamus_comm_${payload.order_num ?? payload.order_id ?? externalId}`,
+          occurredAt,
+          amount: commissionAmount,
+          currency,
+          description: 'Комиссия Продамуса',
+          rawPayload: {
+            orderId: payload.order_id ?? null,
+            orderNum: payload.order_num ?? null,
+            commissionPercent: payload.commission ?? null,
+            ofGross: payload.sum,
+          },
+          needsClassification: false,
+        };
+        commissionInserted = await insertSyncTransactions({
+          sourceCode: 'prodamus',
+          transactions: [commTx],
+          createdBy,
+          entityId,
+          directionId: null,
+          categoryId: null,
+          flowType: 'expense',
+          // Комиссия «в пути» вместе с валовым доходом: удержится в момент выплаты
+          // Продамуса на Точку. tochkaSync переведёт её в 'completed' вместе с доходом.
+          txStatus: 'pending',
+          pnlCategory: 'payment_commission',
+          counterparty: 'Комиссия Продамуса',
+        });
+      }
+    } catch {
+      log.warn({ source: 'prodamus' }, 'prodamus_webhook_commission_parse_failed');
+    }
+  }
+
+  log.info(
+    { source: 'prodamus', inserted, commissionInserted, products_count: payload.products.length },
+    'prodamus_webhook_processed'
+  );
 
   return { ok: true, status: 200, responseBody: 'success' };
 }
