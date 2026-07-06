@@ -675,7 +675,9 @@ export async function syncTochka(
   const createdBy: bigint = config.OWNER_TG_ID;
 
   // Флаг: в этом синке пришла выплата от Продамуса → деньги «в пути» дошли.
-  let prodamusPayoutSeen = false;
+  // Сумма выплат Продамуса, пришедших в этом синке (нетто, в копейках). По ней
+  // гасим pending-продажи старые-первыми — ровно на пришедшую сумму, а не все скопом.
+  let prodamusPayoutKop = 0n;
 
   // Даты окна синхронизации в МСК
   const today = mskDateString(0);
@@ -765,7 +767,7 @@ export async function syncTochka(
       // Банковское зачисление — это выплата уже учтённых продаж (иначе двойной счёт).
       // НО факт прихода выплаты = деньги «в пути» дошли → потом переведём их в completed.
       if (tx.creditDebitIndicator === 'Credit' && /продамус/i.test(tx.DebtorParty?.name ?? '')) {
-        prodamusPayoutSeen = true;
+        prodamusPayoutKop += BigInt(Math.round(Number(tx.Amount?.amount ?? '0') * 100));
         continue;
       }
 
@@ -791,23 +793,49 @@ export async function syncTochka(
     }
   }
 
-  // Деньги в пути: если пришла выплата Продамуса — продажи прошлых дней дошли.
-  // Переводим pending-операции Продамуса с occurred_at < сегодня в completed:
-  // и валовый доход, и удержанную комиссию (payment_commission) — они оседают
-  // вместе в момент выплаты на Точку.
-  // Сегодняшние продажи остаются «в пути» (зачисление обычно на следующие сутки).
-  if (prodamusPayoutSeen) {
+  // Деньги в пути: пришла выплата Продамуса на сумму prodamusPayoutKop (нетто).
+  // Гасим pending-продажи СТАРЫЕ-ПЕРВЫМИ ровно на пришедшую сумму (по нетто =
+  // валовый доход − комиссия), а не все скопом — иначе «в пути» ложно обнулялось бы,
+  // ведь Продамус держит деньги несколько дней и платит батчами. Доход и его
+  // комиссию (prodamus_comm_<order>) переводим в completed вместе.
+  if (prodamusPayoutKop > 0n) {
     try {
-      const flipped = await sql<{ id: string }[]>`
-        UPDATE transactions
-        SET tx_status = 'completed', updated_at = NOW()
-        WHERE deleted_at IS NULL
-          AND tx_status = 'pending'
-          AND source_id = (SELECT id FROM sources WHERE code = 'prodamus')
-          AND occurred_at < ${today}
-        RETURNING id
+      // Кандидаты: pending-доходы Продамуса, старые первыми, с их комиссией.
+      const pend = await sql<{ id: string; ext: string; amount_rub: bigint; comm_id: string | null; comm_amt: bigint | null }[]>`
+        SELECT i.id, i.external_id AS ext, i.amount_rub,
+               c.id AS comm_id, c.amount_rub AS comm_amt
+        FROM transactions i
+        LEFT JOIN transactions c
+          ON c.external_id = 'prodamus_comm_' || SUBSTRING(i.external_id FROM 10)
+         AND c.deleted_at IS NULL
+        WHERE i.deleted_at IS NULL
+          AND i.flow_type = 'income'
+          AND i.tx_status = 'pending'
+          AND i.source_id = (SELECT id FROM sources WHERE code = 'prodamus')
+        ORDER BY i.occurred_at ASC, i.external_id ASC
       `;
-      log.info({ handler: 'tochkaSync', flipped: flipped.length }, 'prodamus_in_transit_settled');
+      let remaining = prodamusPayoutKop;
+      const toSettle: string[] = [];
+      for (const p of pend) {
+        const net = BigInt(p.amount_rub) - BigInt(p.comm_amt ?? 0n);
+        if (net <= 0n) continue;
+        // Гасим, пока пришедшей суммы хватает на нетто этой продажи (с небольшим
+        // допуском в полкопейки на округление).
+        if (remaining + 1n < net) break;
+        remaining -= net;
+        toSettle.push(p.id);
+        if (p.comm_id) toSettle.push(p.comm_id);
+      }
+      if (toSettle.length > 0) {
+        await sql`
+          UPDATE transactions SET tx_status = 'completed', updated_at = NOW()
+          WHERE id = ANY(${toSettle}) AND deleted_at IS NULL
+        `;
+      }
+      log.info(
+        { handler: 'tochkaSync', payout_kop: prodamusPayoutKop.toString(), settled: toSettle.length },
+        'prodamus_in_transit_settled'
+      );
     } catch (err) {
       log.warn({ handler: 'tochkaSync', err: String(err) }, 'prodamus_settle_failed');
     }
