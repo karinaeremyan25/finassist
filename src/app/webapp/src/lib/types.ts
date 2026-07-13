@@ -189,7 +189,12 @@ export interface PnlIncomeSources {
 export interface PnlExpenseBreakdown {
   payroll?: number;
   marketing?: number;
+  /** Налог с дохода (расчётный АУСН 8%). */
   tax?: number;
+  /** Налоги зарплатные (взносы/НДФЛ) — фактические платежи. */
+  tax_payroll?: number;
+  /** Аренда — фактические платежи. */
+  rent?: number;
   subscriptions?: number;
   loan?: number;
   other_business?: number;

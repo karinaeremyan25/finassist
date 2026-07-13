@@ -25,7 +25,9 @@ export const BUSINESS_EXPENSE_ROWS: Array<{
   key:
     | 'payroll'
     | 'marketing'
+    | 'rent'
     | 'tax'
+    | 'tax_payroll'
     | 'subscriptions'
     | 'loan'
     | 'payment_commission'
@@ -34,7 +36,9 @@ export const BUSINESS_EXPENSE_ROWS: Array<{
 }> = [
   { key: 'payroll', label: 'ФОТ' },
   { key: 'marketing', label: 'Маркетинг' },
-  { key: 'tax', label: 'Налог' },
+  { key: 'rent', label: 'Аренда' },
+  { key: 'tax', label: 'Налоги от прибыли' },
+  { key: 'tax_payroll', label: 'Налоги зарплатные' },
   { key: 'subscriptions', label: 'Подписки' },
   { key: 'loan', label: 'Кредиты' },
   { key: 'payment_commission', label: 'Комиссии' },
@@ -63,9 +67,10 @@ export interface CategoryOption {
 export const BUSINESS_CATEGORY_OPTIONS: CategoryOption[] = [
   { code: 'payroll', label: 'ФОТ/Зарплата' },
   { code: 'marketing', label: 'Маркетинг' },
+  { code: 'rent', label: 'Аренда' },
+  { code: 'tax_payroll', label: 'Налоги зарплатные' },
   { code: 'loan', label: 'Кредиты' },
   { code: 'subscriptions', label: 'Подписки/сервисы' },
-  { code: 'tax', label: 'Налог' },
   { code: 'other_business', label: 'Прочее (бизнес)' },
 ];
 

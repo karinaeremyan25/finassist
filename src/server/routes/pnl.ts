@@ -124,12 +124,14 @@ export const pnlHandler: ApiHandler = async (req): Promise<ApiResponse> => {
     // Данные текущего периода
     const current = await getPnlForPeriod(period, entityIds);
 
-    // Бизнес-расходы = сумма по категориям + налог
+    // Бизнес-расходы = сумма по категориям + расчётный налог с дохода (АУСН 8%)
     const expensesSubtotal =
       current.expensesBreakdown.payroll +
       current.expensesBreakdown.marketing +
       current.expensesBreakdown.subscriptions +
       current.expensesBreakdown.loan +
+      current.expensesBreakdown.tax_payroll +
+      current.expensesBreakdown.rent +
       current.expensesBreakdown.payment_commission +
       current.expensesBreakdown.other_business;
     const expensesTotal = expensesSubtotal + current.tax;
@@ -149,6 +151,8 @@ export const pnlHandler: ApiHandler = async (req): Promise<ApiResponse> => {
       previous.expensesBreakdown.marketing +
       previous.expensesBreakdown.subscriptions +
       previous.expensesBreakdown.loan +
+      previous.expensesBreakdown.tax_payroll +
+      previous.expensesBreakdown.rent +
       previous.expensesBreakdown.payment_commission +
       previous.expensesBreakdown.other_business;
     const prevExpensesTotal = prevExpensesSubtotal + previous.tax;
@@ -183,6 +187,8 @@ export const pnlHandler: ApiHandler = async (req): Promise<ApiResponse> => {
             payroll: current.expensesBreakdown.payroll,
             marketing: current.expensesBreakdown.marketing,
             tax: current.tax,
+            tax_payroll: current.expensesBreakdown.tax_payroll,
+            rent: current.expensesBreakdown.rent,
             payment_commission: current.expensesBreakdown.payment_commission,
             subscriptions: current.expensesBreakdown.subscriptions,
             loan: current.expensesBreakdown.loan,

@@ -47,6 +47,8 @@ export const VALID_PNL_CATEGORIES = [
   'loan',
   'subscriptions',
   'tax',
+  'tax_payroll',
+  'rent',
   'payment_commission',
   'other_business',
   'personal_food',
@@ -77,6 +79,8 @@ export interface PnlPeriodData {
     marketing: bigint;
     subscriptions: bigint;
     loan: bigint;
+    tax_payroll: bigint;
+    rent: bigint;
     payment_commission: bigint;
     other_business: bigint;
   };
@@ -228,6 +232,8 @@ export async function getPnlForPeriod(
     marketing: expenseByCategory.get('marketing') ?? 0n,
     subscriptions: expenseByCategory.get('subscriptions') ?? 0n,
     loan: expenseByCategory.get('loan') ?? 0n,
+    tax_payroll: expenseByCategory.get('tax_payroll') ?? 0n,
+    rent: expenseByCategory.get('rent') ?? 0n,
     payment_commission: expenseByCategory.get('payment_commission') ?? 0n,
     other_business: expenseByCategory.get('other_business') ?? 0n,
   };

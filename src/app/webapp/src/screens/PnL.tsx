@@ -69,7 +69,9 @@ const INCOME_SOURCE_LABELS: Array<{ key: keyof PnlIncomeSources; label: string }
 const EXPENSE_LABELS: Array<{ key: keyof PnlExpenseBreakdown; label: string }> = [
   { key: 'payroll', label: 'ФОТ' },
   { key: 'marketing', label: 'Маркетинг' },
-  { key: 'tax', label: 'Налог' },
+  { key: 'rent', label: 'Аренда' },
+  { key: 'tax', label: 'Налоги от прибыли' },
+  { key: 'tax_payroll', label: 'Налоги зарплатные' },
   { key: 'subscriptions', label: 'Подписки' },
   { key: 'loan', label: 'Кредиты' },
   { key: 'payment_commission', label: 'Комиссии платёжек' },
