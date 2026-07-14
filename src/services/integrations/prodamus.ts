@@ -283,6 +283,21 @@ export async function handleProdamusWebhook(
 
   log.info({ source: 'prodamus', signature_ok: true }, 'prodamus_webhook_signature_ok');
 
+  // Демо/тестовый пинг Продамуса. При добавлении URL в кабинете (и кнопкой
+  // «протестировать») Продамус шлёт подписанный демо-платёж (demo_mode=1). Если
+  // ответить ошибкой — Продамус считает адрес нерабочим и НЕ сохраняет его
+  // («слетает»). Поэтому: подпись валидна → отвечаем 200 success, но НЕ создаём
+  // операцию (иначе в учёт попадёт фейковый демо-платёж).
+  const demoRaw = String(
+    (rawFields as Record<string, unknown>)['demo_mode'] ??
+      (rawFields as Record<string, unknown>)['demo'] ??
+      ''
+  ).trim().toLowerCase();
+  if (demoRaw === '1' || demoRaw === 'true' || demoRaw === 'yes') {
+    log.info({ source: 'prodamus' }, 'prodamus_webhook_demo_ping_ok');
+    return { ok: true, status: 200, responseBody: 'success' };
+  }
+
   // Zod-валидация payload по ВЛОЖЕННОЙ структуре (products как настоящий массив,
   // иначе товар не распознаётся и маршрут по продукту падает в дефолт).
   const nested = unflattenFields(rawFields);
