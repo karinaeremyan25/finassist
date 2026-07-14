@@ -221,6 +221,21 @@ function isLoan(_name: string | null | undefined): boolean {
   return false;
 }
 
+/**
+ * Достаёт реальную дату операции из назначения платежа Точки.
+ * Формат: «…дата операции:03/07/2026 19:33(МСК)…» → '2026-07-03'.
+ * Нужна для карточных покупок: дата операции ≠ дата проводки в выписке.
+ * Возвращает null, если в назначении даты операции нет.
+ */
+function extractOperationDate(desc: string): string | null {
+  const m = /дата\s*операции[:\s]*(\d{2})\/(\d{2})\/(\d{4})/i.exec(desc);
+  if (!m) return null;
+  const dd = m[1]!, mm = m[2]!, yyyy = m[3]!;
+  // Санити: месяц 01-12, день 01-31.
+  if (Number(mm) < 1 || Number(mm) > 12 || Number(dd) < 1 || Number(dd) > 31) return null;
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 /** Возвращает номер счёта (часть до '/') из accountId. */
 function accountNumber(accountId: string): string {
   return accountId.split('/')[0] ?? accountId;
@@ -454,11 +469,15 @@ async function insertTransaction(
   }
   const incomeKop = kop + commissionKop; // валовый доход (зачисление + комиссия)
 
-  // Дата: documentProcessDate из поля Точки, иначе bookingDateTime, иначе today
+  // Дата операции. ВАЖНО (бухгалтерия, 14.07.2026): карточные покупки в Точке
+  // проходят по ДАТЕ ОПЕРАЦИИ (когда списалось с карты), а в выписке дата
+  // проводки/зачисления может быть на несколько дней позже (банк проводит
+  // пакетом). Приложение Точки показывает дату операции — берём её в приоритете.
+  // Реальная дата лежит в назначении: «…дата операции:03/07/2026 19:33(МСК)…».
+  const opDate = extractOperationDate(tx.description ?? '');
   const dateRaw = tx.documentProcessDate ?? tx.bookingDateTime;
-  const occurredAt = dateRaw
-    ? (dateRaw.length >= 10 ? dateRaw.slice(0, 10) : today)
-    : today;
+  const occurredAt =
+    opDate ?? (dateRaw ? (dateRaw.length >= 10 ? dateRaw.slice(0, 10) : today) : today);
   const occTs = `${occurredAt}T12:00:00Z`;
 
   // Контрагент
