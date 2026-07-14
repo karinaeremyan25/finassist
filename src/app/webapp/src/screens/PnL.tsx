@@ -74,7 +74,8 @@ const EXPENSE_LABELS: Array<{ key: keyof PnlExpenseBreakdown; label: string }> =
   { key: 'tax_payroll', label: 'Налоги зарплатные' },
   { key: 'subscriptions', label: 'Подписки' },
   { key: 'loan', label: 'Кредиты' },
-  { key: 'payment_commission', label: 'Комиссии платёжек' },
+  { key: 'payment_commission', label: 'Комиссии' },
+  { key: 'bank_services', label: 'Фин.услуги' },
   { key: 'other_business', label: 'Прочее' },
 ];
 

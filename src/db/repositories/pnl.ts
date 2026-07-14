@@ -50,6 +50,7 @@ export const VALID_PNL_CATEGORIES = [
   'tax_payroll',
   'rent',
   'payment_commission',
+  'bank_services',
   'other_business',
   'personal_food',
   'personal_shopping',
@@ -82,6 +83,7 @@ export interface PnlPeriodData {
     tax_payroll: bigint;
     rent: bigint;
     payment_commission: bigint;
+    bank_services: bigint;
     other_business: bigint;
   };
   /** Расчётный налог = ROUND(incomeTotal * 0.08) */
@@ -235,6 +237,7 @@ export async function getPnlForPeriod(
     tax_payroll: expenseByCategory.get('tax_payroll') ?? 0n,
     rent: expenseByCategory.get('rent') ?? 0n,
     payment_commission: expenseByCategory.get('payment_commission') ?? 0n,
+    bank_services: expenseByCategory.get('bank_services') ?? 0n,
     other_business: expenseByCategory.get('other_business') ?? 0n,
   };
 

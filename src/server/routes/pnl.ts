@@ -133,6 +133,7 @@ export const pnlHandler: ApiHandler = async (req): Promise<ApiResponse> => {
       current.expensesBreakdown.tax_payroll +
       current.expensesBreakdown.rent +
       current.expensesBreakdown.payment_commission +
+      current.expensesBreakdown.bank_services +
       current.expensesBreakdown.other_business;
     const expensesTotal = expensesSubtotal + current.tax;
 
@@ -154,6 +155,7 @@ export const pnlHandler: ApiHandler = async (req): Promise<ApiResponse> => {
       previous.expensesBreakdown.tax_payroll +
       previous.expensesBreakdown.rent +
       previous.expensesBreakdown.payment_commission +
+      previous.expensesBreakdown.bank_services +
       previous.expensesBreakdown.other_business;
     const prevExpensesTotal = prevExpensesSubtotal + previous.tax;
     const prevProfit = previous.incomeTotal - prevExpensesTotal;
@@ -190,6 +192,7 @@ export const pnlHandler: ApiHandler = async (req): Promise<ApiResponse> => {
             tax_payroll: current.expensesBreakdown.tax_payroll,
             rent: current.expensesBreakdown.rent,
             payment_commission: current.expensesBreakdown.payment_commission,
+            bank_services: current.expensesBreakdown.bank_services,
             subscriptions: current.expensesBreakdown.subscriptions,
             loan: current.expensesBreakdown.loan,
             other_business: current.expensesBreakdown.other_business,

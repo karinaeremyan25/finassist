@@ -236,6 +236,27 @@ function extractOperationDate(desc: string): string | null {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+/**
+ * Детерминированно определяет статью комиссии по назначению расхода Точки.
+ * (Бухгалтерия, 14.07.2026): комиссии разносим по двум статьям —
+ *   bank_services  — «Фин.услуги»: банковское обслуживание/РКО, тарифный пакет,
+ *                    лицензия ПК «Сервис Точка», комиссия по зарплатному проекту;
+ *   payment_commission — «Комиссии»: эквайринг/приём оплат.
+ * Возвращает null, если операция не похожа на комиссию (уйдёт в классификатор).
+ */
+function detectFeeCategory(desc: string): string | null {
+  const d = desc.toLowerCase();
+  if (
+    /тариф\S*\s*пакет|пк\s*сервис\s*точк|лицензионного вознаграждения за использование базовой лицензии|расчетно-кассов|зарплатн\S*\s*проект|за ведение сч/.test(d)
+  ) {
+    return 'bank_services';
+  }
+  if (/эквайринг|комисси\S*\s*за\s*при[её]м|комисси\S*\s*платежн/.test(d)) {
+    return 'payment_commission';
+  }
+  return null;
+}
+
 /** Возвращает номер счёта (часть до '/') из accountId. */
 function accountNumber(accountId: string): string {
   return accountId.split('/')[0] ?? accountId;
@@ -506,11 +527,22 @@ async function insertTransaction(
     needsClassification = false;
     needsReview = false;
   } else {
-    // Расход: pnl_category будет назначена классификатором после вставки
-    catCode = 'other_expense';
-    pnlCategory = null;
-    needsClassification = true;
-    needsReview = true;
+    // Расход. Банковское обслуживание/эквайринг определяем детерминированно по
+    // назначению (не гоняем через ИИ) — иначе банковское обслуживание уезжает в
+    // «Подписки», а комиссия эквайринга — в «Прочее».
+    const fee = detectFeeCategory(desc);
+    if (fee !== null) {
+      pnlCategory = fee;
+      catCode = 'other_expense';
+      needsClassification = false;
+      needsReview = false;
+    } else {
+      // pnl_category будет назначена классификатором после вставки
+      catCode = 'other_expense';
+      pnlCategory = null;
+      needsClassification = true;
+      needsReview = true;
+    }
   }
 
   // Перевод НА карту Наташи (Debit, получатель = доп-счёт ИП) → ФОТ (её ЗП),

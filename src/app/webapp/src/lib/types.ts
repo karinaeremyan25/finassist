@@ -198,8 +198,10 @@ export interface PnlExpenseBreakdown {
   subscriptions?: number;
   loan?: number;
   other_business?: number;
-  /** Комиссии платёжек — спека упоминает, бэк может присылать. */
+  /** Комиссии эквайринга (Продамус/Ассургина/Lava). */
   payment_commission?: number;
+  /** Фин.услуги — банковское обслуживание/РКО, зарплатный проект. */
+  bank_services?: number;
 }
 
 export interface PnlResponse {

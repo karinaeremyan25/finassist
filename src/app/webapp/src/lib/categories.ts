@@ -31,6 +31,7 @@ export const BUSINESS_EXPENSE_ROWS: Array<{
     | 'subscriptions'
     | 'loan'
     | 'payment_commission'
+    | 'bank_services'
     | 'other_business';
   label: string;
 }> = [
@@ -42,6 +43,7 @@ export const BUSINESS_EXPENSE_ROWS: Array<{
   { key: 'subscriptions', label: 'Подписки' },
   { key: 'loan', label: 'Кредиты' },
   { key: 'payment_commission', label: 'Комиссии' },
+  { key: 'bank_services', label: 'Фин.услуги' },
   { key: 'other_business', label: 'Прочее' },
 ];
 
@@ -71,6 +73,8 @@ export const BUSINESS_CATEGORY_OPTIONS: CategoryOption[] = [
   { code: 'tax_payroll', label: 'Налоги зарплатные' },
   { code: 'loan', label: 'Кредиты' },
   { code: 'subscriptions', label: 'Подписки/сервисы' },
+  { code: 'payment_commission', label: 'Комиссии (эквайринг)' },
+  { code: 'bank_services', label: 'Фин.услуги (банк)' },
   { code: 'other_business', label: 'Прочее (бизнес)' },
 ];
 
