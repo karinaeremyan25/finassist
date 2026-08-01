@@ -567,7 +567,7 @@ async function insertTransaction(
   // direction_id: для доходов — направление юрлица, для расходов — null
   const directionId: string | null = isCredit ? incomeDirectionId : null;
 
-  const rows = await sql<{ id: string }[]>`
+  const rows = await sql<{ id: string; inserted: boolean }[]>`
     INSERT INTO transactions (
       flow_type, amount, currency, amount_rub, fx_rate,
       entity_id, direction_id, category_id, source_id,
@@ -596,11 +596,15 @@ async function insertTransaction(
       false
     )
     ON CONFLICT (external_id) WHERE external_id IS NOT NULL AND deleted_at IS NULL
-    DO NOTHING
-    RETURNING id
+    DO UPDATE SET occurred_at = EXCLUDED.occurred_at, updated_at = NOW()
+      WHERE transactions.occurred_at IS DISTINCT FROM EXCLUDED.occurred_at
+    RETURNING id, (xmax = 0) AS inserted
   `;
 
-  const inserted = rows[0] !== undefined;
+  // inserted=true только для НОВОЙ строки (xmax=0). Если это была само-починка
+  // даты у существующей операции (occurred_at подтянут к дате операции) —
+  // inserted=false: не считаем как новую и не задваиваем комиссию.
+  const inserted = rows[0]?.inserted === true;
   const id = rows[0]?.id ?? '';
 
   // Комиссия эквайринга — отдельный расход payment_commission (только если доход
