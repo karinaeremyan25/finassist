@@ -19,6 +19,7 @@ import { createHash } from 'node:crypto';
 import { config } from '../../config.js';
 import { syncTochka } from '../../services/integrations/tochkaSync.js';
 import { checkSilentSources } from '../../services/sourceWatchdog.js';
+import { notifyFotDistribution } from '../../services/fotNotify.js';
 import { resolveWebAppUser, unauthorizedResponse, WebAppAuthError } from '../auth.js';
 import { childLogger } from '../../utils/logger.js';
 import type { ApiHandler, ApiResponse } from '../http.js';
@@ -82,6 +83,15 @@ export const tochkaSyncHandler: ApiHandler = async (req): Promise<ApiResponse> =
         );
       } catch (wdErr) {
         log.error({ handler: 'tochka_sync', error: String(wdErr) }, 'source_watchdog_piggyback_failed');
+      }
+
+      // Авто-уведомление бухгалтера о снятиях налички / переводах на карты людей
+      // (кому это ЗП). Дедуп внутри — каждая операция уведомляется один раз.
+      try {
+        const fn = await notifyFotDistribution();
+        log.info({ handler: 'tochka_sync', fot_candidates: fn.candidates, fot_notified: fn.notified }, 'fot_notify_piggyback');
+      } catch (fnErr) {
+        log.error({ handler: 'tochka_sync', error: String(fnErr) }, 'fot_notify_piggyback_failed');
       }
     }
 
