@@ -22,24 +22,18 @@ export function rublesSigned(kopecks: number): string {
   return `${sign}${rubles(Math.abs(kopecks))}`;
 }
 
-/** Компактная форма для KPI: "2 840K ₽" / "4,3M ₽". */
-export function rublesCompact(kopecks: number): string {
-  const rub = kopecks / 100;
-  const abs = Math.abs(rub);
-  if (abs >= 1_000_000) {
-    return `${formatNum(rub / 1_000_000)}M ₽`;
-  }
-  if (abs >= 1_000) {
-    return `${Math.round(rub / 1_000)}K ₽`;
-  }
-  return rubles(kopecks);
-}
+const RUB_INT_FORMAT = new Intl.NumberFormat('ru-RU', {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 0,
+  useGrouping: true,
+});
 
-function formatNum(n: number): string {
-  return new Intl.NumberFormat('ru-RU', {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 1,
-  }).format(n);
+/**
+ * Форма для KPI (выручка/расход): ПОЛНОЕ число без копеек и без сокращений.
+ * "1 900 000 ₽" (не "1,9M"). По просьбе бухгалтерии — нужны полные цифры.
+ */
+export function rublesCompact(kopecks: number): string {
+  return `${RUB_INT_FORMAT.format(Math.round(kopecks / 100))} ₽`;
 }
 
 /** Процент с фиксированным знаком: "+12,4%". */
