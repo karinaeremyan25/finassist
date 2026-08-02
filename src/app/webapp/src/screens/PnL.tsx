@@ -559,12 +559,15 @@ function IncomeBreakdown({ entity, period }: { entity: PnlEntity; period: string
 
 function ExpenseBlock({ data, entity, period }: { data: PnlResponse; entity: PnlEntity; period: string }) {
   const total = data.expenses.total;
+  const prev = data.expenses.prev_breakdown;
+  const prevPeriod = shiftYm(period, -1);
   const rows = EXPENSE_LABELS.map((e) => ({
     key: e.key as string,
     label: e.label,
     amount: data.expenses.breakdown[e.key],
+    prevAmount: prev?.[e.key] ?? 0,
   })).filter(
-    (r): r is { key: string; label: string; amount: number } =>
+    (r): r is { key: string; label: string; amount: number; prevAmount: number } =>
       typeof r.amount === 'number' && r.amount !== 0
   );
 
@@ -580,6 +583,8 @@ function ExpenseBlock({ data, entity, period }: { data: PnlResponse; entity: Pnl
                 catKey={r.key}
                 label={r.label}
                 amount={r.amount}
+                prevAmount={r.prevAmount}
+                prevPeriod={prevPeriod}
                 pct={total > 0 ? (r.amount / total) * 100 : 0}
                 entity={entity}
                 period={period}
@@ -602,11 +607,19 @@ function ExpenseBlock({ data, entity, period }: { data: PnlResponse; entity: Pnl
   );
 }
 
-/** Строка статьи расходов: тап → раскрытие транзакций этой категории. */
+/** Изменение к прошлому месяцу: %-бейдж (рост расхода — красный, снижение — зелёный). */
+function momDeltaPct(amount: number, prevAmount: number): number | null {
+  if (prevAmount <= 0) return amount > 0 ? Infinity : null; // новое
+  return Math.round(((amount - prevAmount) / prevAmount) * 100);
+}
+
+/** Строка статьи расходов: тап → раскрытие транзакций этой категории + сравнение с прошлым месяцем. */
 function ExpenseRow({
   catKey,
   label,
   amount,
+  prevAmount,
+  prevPeriod,
   pct,
   entity,
   period,
@@ -614,11 +627,22 @@ function ExpenseRow({
   catKey: string;
   label: string;
   amount: number;
+  prevAmount: number;
+  prevPeriod: string;
   pct: number;
   entity: PnlEntity;
   period: string;
 }) {
   const [open, setOpen] = useState(false);
+  const delta = momDeltaPct(amount, prevAmount);
+  const deltaLabel =
+    delta === null ? null : delta === Infinity ? 'новое' : `${delta >= 0 ? '+' : ''}${delta}%`;
+  const deltaColor =
+    delta === null || delta === 0
+      ? 'var(--ink-faint)'
+      : delta === Infinity || delta > 0
+        ? 'var(--expense)'
+        : 'var(--income)';
   return (
     <li>
       <button
@@ -627,10 +651,15 @@ function ExpenseRow({
           hapticSelection();
           setOpen((v) => !v);
         }}
-        className="flex w-full items-baseline justify-between gap-3 py-2.5 text-left active:opacity-70"
+        className="flex w-full items-baseline justify-between gap-2 py-2.5 text-left active:opacity-70"
         aria-expanded={open}
       >
         <span className="min-w-0 flex-1 truncate text-[14px] text-ink">{label}</span>
+        {deltaLabel ? (
+          <span className="num shrink-0 text-[11px] font-medium" style={{ color: deltaColor }}>
+            {deltaLabel}
+          </span>
+        ) : null}
         <span className="num shrink-0 text-[12px] text-ink-faint">{Math.round(pct)}%</span>
         <span className="num shrink-0 text-[14px] font-semibold" style={{ color: 'var(--expense)' }}>
           {rubles(amount)}
@@ -641,15 +670,43 @@ function ExpenseRow({
           <ChevronRight size={15} className="shrink-0 text-ink-faint" />
         )}
       </button>
-      {open ? <ExpenseDrill catKey={catKey} entity={entity} period={period} /> : null}
+      {open ? (
+        <ExpenseDrill
+          catKey={catKey}
+          entity={entity}
+          period={period}
+          prevPeriod={prevPeriod}
+          amount={amount}
+          prevAmount={prevAmount}
+        />
+      ) : null}
     </li>
   );
 }
 
-/** Транзакции одной статьи расходов: клик по операции → сменить категорию. */
-function ExpenseDrill({ catKey, entity, period }: { catKey: string; entity: PnlEntity; period: string }) {
+/** Транзакции статьи + сравнение с прошлым месяцем («что выросло»). */
+function ExpenseDrill({
+  catKey,
+  entity,
+  period,
+  prevPeriod,
+  amount,
+  prevAmount,
+}: {
+  catKey: string;
+  entity: PnlEntity;
+  period: string;
+  prevPeriod: string;
+  amount: number;
+  prevAmount: number;
+}) {
   const bd = useAsync(() => api.expenseBreakdown(entity, period, catKey), [entity, period, catKey]);
   const [detail, setDetail] = useState<TransactionItem | null>(null);
+  const [showPrev, setShowPrev] = useState(false);
+  const prevBd = useAsync(
+    () => (showPrev ? api.expenseBreakdown(entity, prevPeriod, catKey) : Promise.resolve(null)),
+    [showPrev, entity, prevPeriod, catKey]
+  );
 
   if (catKey === 'tax') {
     return (
@@ -658,13 +715,72 @@ function ExpenseDrill({ catKey, entity, period }: { catKey: string; entity: PnlE
       </p>
     );
   }
+
+  // Шапка сравнения: было → стало (+разница). Клик — показать операции прошлого месяца.
+  const diff = amount - prevAmount;
+  const comparison = (
+    <button
+      type="button"
+      onClick={() => {
+        hapticSelection();
+        setShowPrev((v) => !v);
+      }}
+      className="mb-1 flex w-full items-baseline justify-between gap-2 rounded-md bg-surface-1 px-3 py-2 text-left active:opacity-70"
+    >
+      <span className="text-[12px] text-ink-muted">
+        Прошлый месяц: <span className="num">{rubles(prevAmount)}</span> → сейчас{' '}
+        <span className="num">{rubles(amount)}</span>
+      </span>
+      <span
+        className="num shrink-0 text-[12px] font-semibold"
+        style={{ color: diff > 0 ? 'var(--expense)' : 'var(--income)' }}
+      >
+        {diff >= 0 ? '+' : ''}
+        {rubles(diff)}
+      </span>
+    </button>
+  );
+
+  const prevList = showPrev ? (
+    <div className="mb-2 rounded-md bg-surface-1 px-3">
+      <p className="py-1 text-[11px] uppercase tracking-[0.04em] text-ink-faint">
+        Операции прошлого месяца ({prevPeriod})
+      </p>
+      {prevBd.status === 'loading' ? (
+        <Skeleton className="mb-2 h-12 w-full rounded-md" />
+      ) : prevBd.data && prevBd.data.items.length > 0 ? (
+        <ul className="divide-y divide-border">
+          {prevBd.data.items.slice(0, 100).map((i) => (
+            <li
+              key={i.id}
+              className="flex items-baseline justify-between gap-3 py-2 text-[13px] text-ink-muted"
+            >
+              <span className="min-w-0 flex-1 truncate">{i.counterparty ?? i.description ?? '—'}</span>
+              <span className="num shrink-0">{rubles(i.amount)}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="py-2 text-[12px] text-ink-faint">В прошлом месяце операций нет.</p>
+      )}
+    </div>
+  ) : null;
   if (bd.status === 'loading') return <Skeleton className="mb-2 h-16 w-full rounded-md" />;
   if (bd.status === 'error') return <ErrorState message={bd.error ?? undefined} onRetry={bd.reload} />;
   if (!bd.data || bd.data.items.length === 0)
-    return <p className="pb-2 text-[12px] text-ink-faint">Операций нет.</p>;
+    return (
+      <>
+        {comparison}
+        {prevList}
+        <p className="pb-2 text-[12px] text-ink-faint">Операций нет.</p>
+      </>
+    );
 
   return (
-    <div className="mb-2 rounded-md bg-surface-1 px-3">
+    <>
+      {comparison}
+      {prevList}
+      <div className="mb-2 rounded-md bg-surface-1 px-3">
       <ul className="divide-y divide-border">
         {bd.data.items.slice(0, 100).map((i) => (
           <li key={i.id}>
@@ -695,7 +811,8 @@ function ExpenseDrill({ catKey, entity, period }: { catKey: string; entity: PnlE
       {detail ? (
         <TransactionDetail tx={detail} onClose={() => setDetail(null)} onChanged={bd.reload} />
       ) : null}
-    </div>
+      </div>
+    </>
   );
 }
 

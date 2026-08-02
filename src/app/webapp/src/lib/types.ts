@@ -216,6 +216,8 @@ export interface PnlResponse {
     /** Копейки. */
     total: number;
     breakdown: PnlExpenseBreakdown;
+    /** Прошлый месяц по статьям — для % роста и раскрытия «что выросло». */
+    prev_breakdown?: PnlExpenseBreakdown;
   };
   /** Чистая прибыль бизнеса, копейки. */
   profit: number;
