@@ -214,7 +214,7 @@ export async function getTaxBase(
         AND t.flow_type = 'income'
         AND t.deleted_at IS NULL
         AND t.occurred_at >= ${dateFrom}
-        AND t.occurred_at <= ${dateTo}
+        AND t.occurred_at < (${dateTo}::date + 1)
     `;
     return rows[0]?.base ?? 0n;
   }
@@ -229,7 +229,7 @@ export async function getTaxBase(
       WHERE entity_id = ${entity.id}
         AND deleted_at IS NULL
         AND occurred_at >= ${dateFrom}
-        AND occurred_at <= ${dateTo}
+        AND occurred_at < (${dateTo}::date + 1)
     `;
     const row = rows[0];
     if (row === undefined) return 0n;
@@ -245,7 +245,7 @@ export async function getTaxBase(
       AND flow_type = 'income'
       AND deleted_at IS NULL
       AND occurred_at >= ${dateFrom}
-      AND occurred_at <= ${dateTo}
+      AND occurred_at < (${dateTo}::date + 1)
   `;
   return rows[0]?.base ?? 0n;
 }

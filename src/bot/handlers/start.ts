@@ -47,7 +47,7 @@ async function handleOwnerStart(ctx: BotContextWithSession): Promise<void> {
     FROM transactions
     WHERE deleted_at IS NULL
       AND occurred_at >= ${dateFrom}
-      AND occurred_at <= ${dateTo}
+      AND occurred_at < (${dateTo}::date + 1)
   `;
 
   const taxFund = await sql<{ balance: bigint }[]>`
@@ -130,7 +130,7 @@ async function handleManagerStart(ctx: BotContextWithSession): Promise<void> {
         AND t.flow_type = 'expense'
         AND t.deleted_at IS NULL
         AND t.occurred_at >= ${dateFrom}
-        AND t.occurred_at <= ${dateTo}
+        AND t.occurred_at < (${dateTo}::date + 1)
       GROUP BY d.display_name
       LIMIT 1
     `;

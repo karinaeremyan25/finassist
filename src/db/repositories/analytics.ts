@@ -102,7 +102,7 @@ export async function getPnLData(params: PnLParams): Promise<PnLQueryResult> {
     LEFT JOIN categories c ON c.id = t.category_id
     WHERE t.deleted_at IS NULL
       AND t.occurred_at >= ${dateFrom}
-      AND t.occurred_at <= ${dateTo}
+      AND t.occurred_at < (${dateTo}::date + 1)
   `;
 
   const row = rows[0];
@@ -161,7 +161,7 @@ export async function getWeeklyRevenue(
     FROM transactions
     WHERE deleted_at IS NULL
       AND occurred_at >= ${dateFrom}
-      AND occurred_at <= ${dateTo}
+      AND occurred_at < (${dateTo}::date + 1)
   `;
 
   const row = rows[0];
@@ -214,7 +214,7 @@ export async function getCategoryExpenses(
       AND t.deleted_at IS NULL
       AND t.flow_type = 'expense'
       AND t.occurred_at >= ${dateFrom}
-      AND t.occurred_at <= ${dateTo}
+      AND t.occurred_at < (${dateTo}::date + 1)
     WHERE c.flow_type = 'expense'
       ${categoryFilter}
     GROUP BY c.id, c.code, c.display_name, c.accounting_type
@@ -252,7 +252,7 @@ export async function getLoanExpenseMetrics(
     LEFT JOIN categories c ON c.id = t.category_id
     WHERE t.deleted_at IS NULL
       AND t.occurred_at >= ${dateFrom}
-      AND t.occurred_at <= ${dateTo}
+      AND t.occurred_at < (${dateTo}::date + 1)
   `;
 
   const row = rows[0];
@@ -276,7 +276,7 @@ export async function getGratitudeFundMetrics(
     JOIN sources s ON s.id = t.source_id
     WHERE t.deleted_at IS NULL
       AND t.occurred_at >= ${dateFrom}
-      AND t.occurred_at <= ${dateTo}
+      AND t.occurred_at < (${dateTo}::date + 1)
       AND s.code = 'tochka'
       AND (
         COALESCE(t.description, '') ILIKE '%благодар%'
@@ -311,7 +311,7 @@ export async function getPayrollAndOperationalShare(
     LEFT JOIN categories c ON c.id = t.category_id
     WHERE t.deleted_at IS NULL
       AND t.occurred_at >= ${dateFrom}
-      AND t.occurred_at <= ${dateTo}
+      AND t.occurred_at < (${dateTo}::date + 1)
   `;
 
   const row = rows[0];
@@ -355,7 +355,7 @@ export async function getDailyRevenueExpenseHistory(
     FROM transactions t
     WHERE t.deleted_at IS NULL
       AND t.occurred_at >= ${dateFrom}
-      AND t.occurred_at <= ${dateTo}
+      AND t.occurred_at < (${dateTo}::date + 1)
     GROUP BY t.occurred_at
     ORDER BY t.occurred_at ASC
   `;
@@ -401,7 +401,7 @@ export async function getTopExpenseCategories(
       AND t.flow_type = 'expense'
       AND (t.is_personal = false OR t.is_personal IS NULL)
       AND t.occurred_at >= ${dateFrom}
-      AND t.occurred_at <= ${dateTo}
+      AND t.occurred_at < (${dateTo}::date + 1)
       ${entityFilter}
     GROUP BY t.pnl_category
     ORDER BY amount DESC
@@ -415,7 +415,7 @@ export async function getTopExpenseCategories(
       AND flow_type = 'expense'
       AND (is_personal = false OR is_personal IS NULL)
       AND occurred_at >= ${dateFrom}
-      AND occurred_at <= ${dateTo}
+      AND occurred_at < (${dateTo}::date + 1)
       ${entityFilter}
   `;
   const totalAmount = totalRows[0]?.total ?? 0n;
@@ -459,7 +459,7 @@ export async function getSummaryTotals(params: SummaryTotalsParams): Promise<Sum
     FROM transactions
     WHERE deleted_at IS NULL
       AND occurred_at >= ${dateFrom}
-      AND occurred_at <= ${dateTo}
+      AND occurred_at < (${dateTo}::date + 1)
       ${entityId !== null && entityId !== undefined ? sql`AND entity_id = ${entityId}` : sql``}
       ${directionId !== null && directionId !== undefined ? sql`AND direction_id = ${directionId}` : sql``}
   `;
@@ -545,7 +545,7 @@ export async function getTransactionList(
     LEFT JOIN categories c ON c.id = t.category_id
     WHERE t.deleted_at IS NULL
       AND t.occurred_at >= ${dateFrom}
-      AND t.occurred_at <= ${dateTo}
+      AND t.occurred_at < (${dateTo}::date + 1)
       ${entityFilter}
       ${directionFilter}
     ORDER BY t.occurred_at DESC, t.created_at DESC
@@ -557,7 +557,7 @@ export async function getTransactionList(
     FROM transactions t
     WHERE t.deleted_at IS NULL
       AND t.occurred_at >= ${dateFrom}
-      AND t.occurred_at <= ${dateTo}
+      AND t.occurred_at < (${dateTo}::date + 1)
       ${entityFilter}
       ${directionFilter}
   `;
@@ -649,7 +649,7 @@ export async function getTransactionsForExport(params: {
     LEFT JOIN sources s ON s.id = t.source_id
     WHERE t.deleted_at IS NULL
       AND t.occurred_at >= ${dateFrom}
-      AND t.occurred_at <= ${dateTo}
+      AND t.occurred_at < (${dateTo}::date + 1)
       ${entityFilter}
       ${directionFilter}
     ORDER BY t.occurred_at ASC
@@ -699,7 +699,7 @@ export async function getGroupedChartData(
     FROM transactions t
     WHERE t.deleted_at IS NULL
       AND t.occurred_at >= ${dateFrom}
-      AND t.occurred_at <= ${dateTo}
+      AND t.occurred_at < (${dateTo}::date + 1)
       ${entityId !== null && entityId !== undefined ? sql`AND t.entity_id = ${entityId}` : sql``}
     GROUP BY DATE_TRUNC(${truncFn}, t.occurred_at)
     ORDER BY DATE_TRUNC(${truncFn}, t.occurred_at) ASC
@@ -727,7 +727,7 @@ export async function getUnplannedExpenses(
     WHERE t.deleted_at IS NULL
       AND t.flow_type = 'expense'
       AND t.occurred_at >= ${dateFrom}
-      AND t.occurred_at <= ${dateTo}
+      AND t.occurred_at < (${dateTo}::date + 1)
       AND (
         COALESCE(t.description, '') ILIKE '%внепл%'
         OR COALESCE(t.description, '') ILIKE '%неплан%'
