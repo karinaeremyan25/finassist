@@ -833,6 +833,17 @@ export async function syncTochka(
         continue;
       }
 
+      // Пропускаем ЗАЧИСЛЕНИЯ от Lava.top (юрлицо «Lavalane Ltd», приходят как
+      // «пополнение карты …7820»): доход Lava уже учтён по продажам (выгрузка/
+      // вебхук). Это выплата уже учтённых продаж — иначе двойной счёт.
+      if (
+        tx.creditDebitIndicator === 'Credit' &&
+        /lavalane|lava\.?top/i.test(`${tx.DebtorParty?.name ?? ''} ${tx.description ?? ''}`)
+      ) {
+        log.info({ handler: 'tochkaSync', amount: tx.Amount?.amount }, 'lava_payout_skipped');
+        continue;
+      }
+
       // Проверяем, что сумма положительная (как в скрипте)
       const rubStr = tx.Amount?.amount ?? '0';
       const rub = Number(rubStr);
