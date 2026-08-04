@@ -9,6 +9,11 @@
  * Дедуп через alert_log (type='fot_ask:<external_id>') — каждая операция
  * уведомляется РОВНО один раз. Запускается попутно из tochkaSync (2×/день).
  * Serverless-отправка: прямой fetch к Telegram, без grammY.
+ *
+ * Для разбора ответа: на каждый вопрос сохраняем связку в fot_pending
+ * (transaction_id ↔ chat_id+message_id), чтобы reply бухгалтера привязать к
+ * конкретному снятию и карте. Определение карты — по описанию Точки (номер
+ * карты в тексте): …7848=Лилиана, …7820=Карина, скрипников=Скрипникова.
  */
 import { sql } from '../db/client.js';
 import { config } from '../config.js';
@@ -22,6 +27,26 @@ const CARD_PEOPLE_RE = 'еремян|азизов|скрипников|лили�
 /** Признак снятия/выдачи наличных в назначении. */
 const CASH_RE = 'выдача наличных|снятие наличных';
 
+/** Код карты по описанию Точки (номер карты пишется прямо в назначении). */
+export function detectCard(descr: string | null, cp: string | null): string | null {
+  const s = `${descr ?? ''} ${cp ?? ''}`;
+  if (/7848/.test(s)) return 'liliana';
+  if (/7820/.test(s)) return 'karina';
+  if (/скрипников/i.test(s)) return 'skripnikova';
+  if (/азизов|лилиан/i.test(s)) return 'liliana';
+  if (/еремян|получатель\s+карин|\+7\s*925\s*779-?32-?27/i.test(s)) return 'karina';
+  if (/выдача наличных|снятие наличных/i.test(descr ?? '')) return 'cash';
+  return null;
+}
+
+/** Человекочитаемое имя карты. */
+const CARD_LABEL: Record<string, string> = {
+  liliana: 'карта Лилианы …7848',
+  karina: 'карта Карины …7820',
+  skripnikova: 'карта Скрипниковой',
+  cash: 'наличные',
+};
+
 async function accountantChatIds(): Promise<bigint[]> {
   const rows = await sql<{ telegram_id: bigint | null }[]>`
     SELECT telegram_id FROM app_users
@@ -30,17 +55,20 @@ async function accountantChatIds(): Promise<bigint[]> {
   return rows.map((r) => r.telegram_id).filter((x): x is bigint => x !== null);
 }
 
-async function sendTg(chatId: bigint, text: string): Promise<boolean> {
+/** Шлёт сообщение, возвращает message_id (или null). */
+async function sendTg(chatId: bigint, text: string): Promise<number | null> {
   try {
     const res = await fetch(`https://api.telegram.org/bot${config.BOT_TOKEN}/sendMessage`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ chat_id: chatId.toString(), text }),
     });
-    return res.ok;
+    if (!res.ok) return null;
+    const body = (await res.json()) as { result?: { message_id?: number } };
+    return body.result?.message_id ?? null;
   } catch (err) {
     log.error({ err: String(err) }, 'fot_notify_send_error');
-    return false;
+    return null;
   }
 }
 
@@ -79,15 +107,27 @@ export async function notifyFotDistribution(): Promise<FotNotifyResult> {
   let notified = 0;
   for (const r of rows) {
     if (r.ext === null) continue;
+    const card = detectCard(r.descr, r.cp);
+    const cardStr = card !== null ? ` (${CARD_LABEL[card] ?? card})` : '';
     const isCash = new RegExp(CASH_RE, 'i').test(r.descr ?? '');
-    const what = isCash ? 'Снятие наличных' : `Перевод: ${r.cp ?? '—'}`;
+    const what = isCash ? `Снятие наличных${cardStr}` : `Перевод${cardStr}: ${r.cp ?? '—'}`;
     const msg =
       `💵 ${r.d} — ${what} ${rubles(r.amount)}.\n\n` +
-      `Кому на ЗП? Ответь фамилиями и суммами (напр.: Токарь 60000, Чеканова 40000).\n` +
-      `Если это не ЗП — напиши «не зп».`;
+      `Кому на ЗП? Ответь на это сообщение фамилиями и суммами ` +
+      `(напр.: Токарь 60000, Чеканова 40000).\n` +
+      `Если это не ЗП — ответь «не зп».`;
+
     let anySent = false;
     for (const cid of accountants) {
-      if (await sendTg(cid, msg)) anySent = true;
+      const messageId = await sendTg(cid, msg);
+      if (messageId !== null) {
+        anySent = true;
+        // Связка для разбора ответа бухгалтера.
+        await sql`
+          INSERT INTO fot_pending (transaction_id, chat_id, message_id, amount_kopecks, card_code)
+          VALUES (${r.id}, ${cid}, ${messageId}, ${r.amount}, ${card})
+        `;
+      }
     }
     if (anySent) {
       await sql`
