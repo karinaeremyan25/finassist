@@ -16,6 +16,7 @@ import { tochkaCallbackHandler } from './routes/tochka.js';
 import { tochkaSyncHandler } from './routes/tochkaSync.js';
 import { sourceWatchdogHandler } from './routes/sourceWatchdog.js';
 import { dailyReportHandler } from './routes/dailyReport.js';
+import { telegramWebhookHandler } from './routes/telegramWebhook.js';
 import { adminUsersHandler } from './routes/admin.js';
 import { planHandler } from './routes/plan.js';
 import {
@@ -67,6 +68,9 @@ export function buildRouter(): Router {
   // Роут — для ручного запуска/теста и как резервный внешний триггер.
   router.add('GET', '/api/cron/daily-report', dailyReportHandler);
   router.add('POST', '/api/cron/daily-report', dailyReportHandler);
+
+  // ── Telegram webhook (приём входящих: /start, ответы бухгалтера) ──────────
+  router.post('/api/telegram/webhook', telegramWebhookHandler);
 
   // Mini App session
   router.post('/api/webapp/session', sessionHandler);
