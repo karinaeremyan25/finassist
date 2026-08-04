@@ -20,6 +20,7 @@ import { config } from '../../config.js';
 import { syncTochka } from '../../services/integrations/tochkaSync.js';
 import { checkSilentSources } from '../../services/sourceWatchdog.js';
 import { notifyFotDistribution } from '../../services/fotNotify.js';
+import { sendDailyReport } from '../../services/dailyReport.js';
 import { resolveWebAppUser, unauthorizedResponse, WebAppAuthError } from '../auth.js';
 import { childLogger } from '../../utils/logger.js';
 import type { ApiHandler, ApiResponse } from '../http.js';
@@ -92,6 +93,15 @@ export const tochkaSyncHandler: ApiHandler = async (req): Promise<ApiResponse> =
         log.info({ handler: 'tochka_sync', fot_candidates: fn.candidates, fot_notified: fn.notified }, 'fot_notify_piggyback');
       } catch (fnErr) {
         log.error({ handler: 'tochka_sync', error: String(fnErr) }, 'fot_notify_piggyback_failed');
+      }
+
+      // Ежедневный отчёт в «Фин.отдел ПСИЗ». Крон 2×/день (10:00 и 21:00 МСК)
+      // после свежего синка → отчёт с актуальными цифрами.
+      try {
+        const dr = await sendDailyReport();
+        log.info({ handler: 'tochka_sync', daily_report_sent: dr.sent }, 'daily_report_piggyback');
+      } catch (drErr) {
+        log.error({ handler: 'tochka_sync', error: String(drErr) }, 'daily_report_piggyback_failed');
       }
     }
 

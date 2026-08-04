@@ -15,6 +15,7 @@ import { fundsHandler } from './routes/funds.js';
 import { tochkaCallbackHandler } from './routes/tochka.js';
 import { tochkaSyncHandler } from './routes/tochkaSync.js';
 import { sourceWatchdogHandler } from './routes/sourceWatchdog.js';
+import { dailyReportHandler } from './routes/dailyReport.js';
 import { adminUsersHandler } from './routes/admin.js';
 import { planHandler } from './routes/plan.js';
 import {
@@ -60,6 +61,12 @@ export function buildRouter(): Router {
   // для ручного запуска/проверки (?key= sha256(BOT_TOKEN) или Bearer CRON_SECRET).
   router.add('GET', '/api/cron/source-watchdog', sourceWatchdogHandler);
   router.add('POST', '/api/cron/source-watchdog', sourceWatchdogHandler);
+
+  // ── Ежедневный отчёт в «Фин.отдел ПСИЗ» ──────────────────────────────────
+  // Так же попутно из tochkaSyncHandler 2×/день (10:00 и 21:00 МСК).
+  // Роут — для ручного запуска/теста и как резервный внешний триггер.
+  router.add('GET', '/api/cron/daily-report', dailyReportHandler);
+  router.add('POST', '/api/cron/daily-report', dailyReportHandler);
 
   // Mini App session
   router.post('/api/webapp/session', sessionHandler);
