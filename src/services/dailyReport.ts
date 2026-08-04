@@ -11,12 +11,13 @@
  * (только для крон-запусков). Serverless-отправка: прямой fetch к Telegram.
  *
  * chat_id группы хранится в settings (key='report_chat_id'), план — в
- * monthly_plans, факт — getMonthActuals, остатки — funds.balance.
+ * monthly_plans, факт — pnlActuals (ТА ЖЕ логика, что P&L «сводная»:
+ * доход без займов, расход без личного), остатки — funds.balance.
  */
 import { sql } from '../db/client.js';
 import { config } from '../config.js';
 import { childLogger } from '../utils/logger.js';
-import { getMonthlyPlan, getMonthActuals } from '../db/repositories/plans.js';
+import { getMonthlyPlan } from '../db/repositories/plans.js';
 
 const log = childLogger({ handler: 'daily-report' });
 
@@ -69,17 +70,24 @@ async function fundBalances(): Promise<Record<string, bigint>> {
   return out;
 }
 
-/** Доход/расход факт за один день [today, today+1). */
-async function todayActuals(today: string): Promise<{ income: bigint; expense: bigint }> {
+/**
+ * Доход/расход факт за период [from, to) — ТОЧНО по логике P&L «сводная»:
+ *   доход  = flow_type='income'  без займов (pnl_category ≠ 'loan')
+ *   расход = flow_type='expense' без личного (is_personal ≠ true)
+ * Границы — ISO-строки дат ('2026-08-01'). Так отчёт бота = P&L = бухгалтер.
+ */
+async function pnlActuals(from: string, to: string): Promise<{ income: bigint; expense: bigint }> {
   const inc = await sql<{ total: bigint }[]>`
     SELECT COALESCE(SUM(amount_rub), 0)::bigint AS total FROM transactions
     WHERE deleted_at IS NULL AND flow_type = 'income'
-      AND occurred_at >= ${today}::date AND occurred_at < (${today}::date + 1)
+      AND pnl_category IS DISTINCT FROM 'loan'
+      AND occurred_at >= ${from}::date AND occurred_at < ${to}::date
   `;
   const exp = await sql<{ total: bigint }[]>`
     SELECT COALESCE(SUM(amount_rub), 0)::bigint AS total FROM transactions
     WHERE deleted_at IS NULL AND flow_type = 'expense'
-      AND occurred_at >= ${today}::date AND occurred_at < (${today}::date + 1)
+      AND (is_personal = false OR is_personal IS NULL)
+      AND occurred_at >= ${from}::date AND occurred_at < ${to}::date
   `;
   return { income: inc[0]?.total ?? 0n, expense: exp[0]?.total ?? 0n };
 }
@@ -110,10 +118,15 @@ export async function buildDailyReportText(): Promise<string> {
   const monthStart = `${ym}-01`;
   const nextMonthStart = `${nextYm}-01`;
 
+  // Следующий день (для границы «сегодня») — парсинг ISO-строки, не Date.now().
+  const nextDay = new Date(`${today}T00:00:00Z`);
+  nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+  const tomorrow = nextDay.toISOString().slice(0, 10);
+
   // Строго последовательно (postgres.js max:1, transaction-mode pooler).
   const plan = await getMonthlyPlan(ym);
-  const actuals = await getMonthActuals(monthStart, nextMonthStart);
-  const tAct = await todayActuals(today);
+  const actuals = await pnlActuals(monthStart, nextMonthStart);
+  const tAct = await pnlActuals(today, tomorrow);
   const funds = await fundBalances();
 
   const g = (c: string): bigint => funds[c] ?? 0n;
@@ -130,15 +143,15 @@ export async function buildDailyReportText(): Promise<string> {
     ``,
     `<b>ДОХОД</b>`,
     `План на ${monthNom} — ${fmt(plan?.incomeMin ?? 0n)}`,
-    `Факт 1–${d} ${MONTHS_GEN[m - 1]} — ${fmt(actuals.incomeActual)}`,
+    `Факт 1–${d} ${MONTHS_GEN[m - 1]} — ${fmt(actuals.income)}`,
     `Сегодня — ${fmt(tAct.income)}`,
-    `Выполнение плана — <b>${pct(actuals.incomeActual, plan?.incomeMin ?? null)}</b>`,
+    `Выполнение плана — <b>${pct(actuals.income, plan?.incomeMin ?? null)}</b>`,
     ``,
     `<b>РАСХОД</b>`,
     `План на ${monthNom} — ${fmt(plan?.expenseMin ?? 0n)}`,
-    `Факт 1–${d} ${MONTHS_GEN[m - 1]} — ${fmt(actuals.expenseActual)}`,
+    `Факт 1–${d} ${MONTHS_GEN[m - 1]} — ${fmt(actuals.expense)}`,
     `Сегодня — ${fmt(tAct.expense)}`,
-    `Выполнение плана — <b>${pct(actuals.expenseActual, plan?.expenseMin ?? null)}</b>`,
+    `Выполнение плана — <b>${pct(actuals.expense, plan?.expenseMin ?? null)}</b>`,
     ``,
     `—`,
     ``,
