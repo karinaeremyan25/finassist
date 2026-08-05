@@ -54,6 +54,7 @@ export interface MonthlyActuals {
 
 export interface UpsertMonthlyPlanData {
   yearMonth: string;
+  entityCode?: string;
   incomeMin?: bigint | null;
   incomeAvg?: bigint | null;
   incomeMax?: bigint | null;
@@ -85,14 +86,17 @@ function mapMonthlyPlan(row: MonthlyPlanRow): MonthlyPlan {
  * Читает строку плана по year_month ('2026-06').
  * Возвращает null, если плана нет.
  */
-export async function getMonthlyPlan(yearMonth: string): Promise<MonthlyPlan | null> {
+export async function getMonthlyPlan(
+  yearMonth: string,
+  entityCode = 'IP'
+): Promise<MonthlyPlan | null> {
   const rows = await sql<MonthlyPlanRow[]>`
     SELECT id, year_month,
            income_min, income_avg, income_max,
            expense_min, expense_avg, expense_max,
            created_at, updated_at
     FROM monthly_plans
-    WHERE year_month = ${yearMonth}
+    WHERE year_month = ${yearMonth} AND entity_code = ${entityCode}
   `;
   const row = rows[0];
   return row === undefined ? null : mapMonthlyPlan(row);
@@ -138,12 +142,13 @@ export async function getMonthActuals(
 export async function upsertMonthlyPlan(data: UpsertMonthlyPlanData): Promise<MonthlyPlan> {
   const rows = await sql<MonthlyPlanRow[]>`
     INSERT INTO monthly_plans (
-      year_month,
+      year_month, entity_code,
       income_min, income_avg, income_max,
       expense_min, expense_avg, expense_max
     )
     VALUES (
       ${data.yearMonth},
+      ${data.entityCode ?? 'IP'},
       ${data.incomeMin ?? null},
       ${data.incomeAvg ?? null},
       ${data.incomeMax ?? null},
@@ -151,7 +156,7 @@ export async function upsertMonthlyPlan(data: UpsertMonthlyPlanData): Promise<Mo
       ${data.expenseAvg ?? null},
       ${data.expenseMax ?? null}
     )
-    ON CONFLICT (year_month) DO UPDATE
+    ON CONFLICT (year_month, entity_code) DO UPDATE
       SET income_min   = COALESCE(EXCLUDED.income_min,   monthly_plans.income_min),
           income_avg   = COALESCE(EXCLUDED.income_avg,   monthly_plans.income_avg),
           income_max   = COALESCE(EXCLUDED.income_max,   monthly_plans.income_max),

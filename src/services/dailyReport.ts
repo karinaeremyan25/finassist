@@ -86,43 +86,30 @@ async function fundBalances(): Promise<Record<string, FundInfo>> {
  *   расход = flow_type='expense' без личного (is_personal ≠ true)
  * Границы — ISO-строки дат ('2026-08-01'). Так отчёт бота = P&L = бухгалтер.
  */
-async function pnlActuals(from: string, to: string): Promise<{ income: bigint; expense: bigint }> {
+async function pnlActuals(
+  from: string,
+  to: string,
+  entityCode?: 'IP' | 'OOO'
+): Promise<{ income: bigint; expense: bigint }> {
+  const ent =
+    entityCode !== undefined
+      ? sql`AND entity_id = (SELECT id FROM entities WHERE code = ${entityCode})`
+      : sql``;
   const inc = await sql<{ total: bigint }[]>`
     SELECT COALESCE(SUM(amount_rub), 0)::bigint AS total FROM transactions
     WHERE deleted_at IS NULL AND flow_type = 'income'
       AND pnl_category IS DISTINCT FROM 'loan'
       AND occurred_at >= ${from}::date AND occurred_at < ${to}::date
+      ${ent}
   `;
   const exp = await sql<{ total: bigint }[]>`
     SELECT COALESCE(SUM(amount_rub), 0)::bigint AS total FROM transactions
     WHERE deleted_at IS NULL AND flow_type = 'expense'
       AND (is_personal = false OR is_personal IS NULL)
       AND occurred_at >= ${from}::date AND occurred_at < ${to}::date
+      ${ent}
   `;
   return { income: inc[0]?.total ?? 0n, expense: exp[0]?.total ?? 0n };
-}
-
-/**
- * План на сегодня: из daily_plan (если задан конкретный день), иначе
- * месячный план ÷ число дней в месяце (равномерно).
- */
-async function dailyPlan(
-  today: string,
-  monthlyIncome: bigint | null,
-  monthlyExpense: bigint | null,
-  daysInMonth: number
-): Promise<{ income: bigint; expense: bigint }> {
-  const rows = await sql<{ income_plan: bigint; expense_plan: bigint }[]>`
-    SELECT income_plan, expense_plan FROM daily_plan WHERE day = ${today}::date
-  `;
-  if (rows[0] !== undefined && (rows[0].income_plan !== 0n || rows[0].expense_plan !== 0n)) {
-    return { income: rows[0].income_plan, expense: rows[0].expense_plan };
-  }
-  const days = BigInt(daysInMonth);
-  return {
-    income: monthlyIncome === null ? 0n : monthlyIncome / days,
-    expense: monthlyExpense === null ? 0n : monthlyExpense / days,
-  };
 }
 
 async function sendTg(chatId: string, text: string): Promise<boolean> {
@@ -158,11 +145,28 @@ export async function buildDailyReportText(): Promise<string> {
   const tomorrow = nextDay.toISOString().slice(0, 10);
 
   // Строго последовательно (postgres.js max:1, transaction-mode pooler).
-  const plan = await getMonthlyPlan(ym);
-  const actuals = await pnlActuals(monthStart, nextMonthStart);
-  const tAct = await pnlActuals(today, tomorrow);
-  const dPlan = await dailyPlan(today, plan?.incomeMin ?? null, plan?.expenseMin ?? null, daysInMonth);
+  // План по юрлицам (расход разбиваем ИП / Ассургина; доход — общий).
+  const ipPlan = await getMonthlyPlan(ym, 'IP');
+  const oooPlan = await getMonthlyPlan(ym, 'OOO');
+  const planIncome = (ipPlan?.incomeMin ?? 0n) + (oooPlan?.incomeMin ?? 0n);
+  const planExpIp = ipPlan?.expenseMin ?? 0n;
+  const planExpOoo = oooPlan?.expenseMin ?? 0n;
+  const planExpTotal = planExpIp + planExpOoo;
+
+  // Факт: доход общий, расход общий и по юрлицам; месяц и сегодня.
+  const actAll = await pnlActuals(monthStart, nextMonthStart);
+  const actIp = await pnlActuals(monthStart, nextMonthStart, 'IP');
+  const actOoo = await pnlActuals(monthStart, nextMonthStart, 'OOO');
+  const tAll = await pnlActuals(today, tomorrow);
+  const tIp = await pnlActuals(today, tomorrow, 'IP');
+  const tOoo = await pnlActuals(today, tomorrow, 'OOO');
   const funds = await fundBalances();
+
+  // Дневной план — месяц ÷ число дней (равномерно).
+  const days = BigInt(daysInMonth);
+  const dPlanIncome = planIncome / days;
+  const dPlanExpIp = planExpIp / days;
+  const dPlanExpOoo = planExpOoo / days;
 
   const bal = (c: string): bigint => funds[c]?.balance ?? 0n;
   const ipCodes = ['rs_ip', 'gratitude', 'credit', 'reserve_ip', 'land', 'tax_ip'];
@@ -185,18 +189,26 @@ export async function buildDailyReportText(): Promise<string> {
     `📊 <b>ОТЧЁТ за ${dateGen}</b>`,
     ``,
     `<b>ДОХОД</b>`,
-    `План на ${monthNom} — ${fmt(plan?.incomeMin ?? 0n)}`,
-    `Факт 1–${d} ${monthGen} — ${fmt(actuals.income)}`,
-    `План на сегодня — ${fmt(dPlan.income)}`,
-    `Факт сегодня — ${fmt(tAct.income)}`,
-    `Выполнение плана — <b>${pct(actuals.income, plan?.incomeMin ?? null)}</b>`,
+    `План на ${monthNom} — ${fmt(planIncome)}`,
+    `Факт 1–${d} ${monthGen} — ${fmt(actAll.income)}`,
+    `План на сегодня — ${fmt(dPlanIncome)}`,
+    `Факт сегодня — ${fmt(tAll.income)}`,
+    `Выполнение плана — <b>${pct(actAll.income, planIncome === 0n ? null : planIncome)}</b>`,
     ``,
     `<b>РАСХОД</b>`,
-    `План на ${monthNom} — ${fmt(plan?.expenseMin ?? 0n)}`,
-    `Факт 1–${d} ${monthGen} — ${fmt(actuals.expense)}`,
-    `План на сегодня — ${fmt(dPlan.expense)}`,
-    `Факт сегодня — ${fmt(tAct.expense)}`,
-    `Выполнение плана — <b>${pct(actuals.expense, plan?.expenseMin ?? null)}</b>`,
+    `<b>ИП</b>`,
+    `План на ${monthNom} — ${fmt(planExpIp)}`,
+    `Факт 1–${d} ${monthGen} — ${fmt(actIp.expense)}`,
+    `План на сегодня — ${fmt(dPlanExpIp)}`,
+    `Факт сегодня — ${fmt(tIp.expense)}`,
+    ``,
+    `<b>Ассургина</b>`,
+    `План на ${monthNom} — ${fmt(planExpOoo)}`,
+    `Факт 1–${d} ${monthGen} — ${fmt(actOoo.expense)}`,
+    `План на сегодня — ${fmt(dPlanExpOoo)}`,
+    `Факт сегодня — ${fmt(tOoo.expense)}`,
+    ``,
+    `Выполнение плана (всего) — <b>${pct(actAll.expense, planExpTotal === 0n ? null : planExpTotal)}</b>`,
     ``,
     `—`,
     ``,
