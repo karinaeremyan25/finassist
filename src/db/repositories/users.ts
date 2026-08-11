@@ -24,6 +24,7 @@ export async function getUserByTelegramId(telegramId: bigint): Promise<AppUser |
     SELECT ${SELECT_COLUMNS}
     FROM app_users
     WHERE telegram_id = ${telegramId} AND is_active = true
+      AND (access_expires_at IS NULL OR access_expires_at > NOW())
   `;
   const row = rows[0];
   return row === undefined ? null : mapAppUser(row);
