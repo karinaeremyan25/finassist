@@ -72,6 +72,32 @@ async function sendWelcome(chatId: number): Promise<void> {
   });
 }
 
+async function isKnownUser(tgId: number): Promise<boolean> {
+  const rows = await sql<{ one: number }[]>`
+    SELECT 1 AS one FROM app_users
+    WHERE telegram_id = ${tgId} AND is_active = true AND deleted_at IS NULL LIMIT 1
+  `;
+  return rows.length > 0;
+}
+
+/** Фиксирует заявку неизвестного пользователя на доступ (для выдачи админом). */
+async function captureAccessRequest(
+  tgId: number,
+  username: string | null,
+  name: string | null
+): Promise<void> {
+  const type = `access_request:${tgId}`;
+  const exists = await sql<{ one: number }[]>`
+    SELECT 1 AS one FROM alert_log WHERE type = ${type} LIMIT 1
+  `;
+  if (exists.length === 0) {
+    const label = `${username !== null ? '@' + username + ' ' : ''}${name ?? ''}`.trim();
+    await sql`
+      INSERT INTO alert_log (type, sent_to, message) VALUES (${type}, ${tgId}, ${label})
+    `;
+  }
+}
+
 async function isAccountant(tgId: number): Promise<boolean> {
   const rows = await sql<{ one: number }[]>`
     SELECT 1 AS one FROM app_users
@@ -192,10 +218,24 @@ export async function handleTelegramUpdate(update: TgUpdate): Promise<void> {
   const text = (msg.text ?? '').trim();
   if (chatId === undefined || fromId === undefined) return;
 
-  // /start (в личке) → приветствие с кнопкой
+  // /start (в личке): известному — приветствие с кнопкой; неизвестному —
+  // показываем его ID и фиксируем заявку на доступ (чтобы админ выдал).
   if (/^\/start(@\w+)?\b/.test(text)) {
-    await sendWelcome(chatId);
-    log.info({ from: fromId }, 'start_handled');
+    const known = await isKnownUser(fromId);
+    if (known) {
+      await sendWelcome(chatId);
+    } else {
+      await tg('sendMessage', {
+        chat_id: chatId,
+        text:
+          '👋 Это <b>FinAssist</b>.\n\n' +
+          `Твой Telegram ID: <code>${fromId}</code>\n` +
+          'Передай его администратору — он выдаст доступ.',
+        parse_mode: 'HTML',
+      });
+      await captureAccessRequest(fromId, msg.from?.username ?? null, msg.from?.first_name ?? null);
+    }
+    log.info({ from: fromId, known }, 'start_handled');
     return;
   }
 
