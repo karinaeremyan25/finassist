@@ -265,6 +265,28 @@ export async function handleProdamusWebhook(
 
   // Проверка подписи
   const signOk = verifyProdamusSignature(rawFields, signHeader, secretKey);
+
+  // Диагностика автоплатежей: пишем КАЖДЫЙ вебхук (ключи, статус, подпись) —
+  // чтобы поймать, доходят ли рекуррентные платежи и на чём отваливаются.
+  try {
+    const keys = Object.keys(rawFields);
+    const hasSub = keys.some((k) => /subscription|rekurrent|recurr|подписк/i.test(k));
+    await sql`
+      INSERT INTO prodamus_webhook_log (order_id, payment_status, sum, keys, has_subscription, sign_ok, outcome)
+      VALUES (
+        ${String(rawFields['order_num'] ?? rawFields['order_id'] ?? '')},
+        ${String(rawFields['payment_status'] ?? '')},
+        ${String(rawFields['sum'] ?? '')},
+        ${keys.join(',')},
+        ${hasSub},
+        ${signOk},
+        ${signOk ? 'sign_ok' : 'bad_sign'}
+      )
+    `;
+  } catch {
+    /* best-effort — не мешаем обработке вебхука */
+  }
+
   if (!signOk) {
     // Диагностика без утечки секрета: какие ключи пришли + первые символы
     // ожидаемой подписи — чтобы быстро понять причину по логам Vercel.
