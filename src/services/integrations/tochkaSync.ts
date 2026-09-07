@@ -26,12 +26,26 @@ import { childLogger } from '../../utils/logger.js';
 import { toKopecks } from '../../utils/money.js';
 import { classifyTransactions, type TxToClassify } from '../transactionClassifier.js';
 import { fetchAndStoreFxRates } from '../cbr.js';
+import { Agent } from 'undici';
+import { TOCHKA_CA } from './tochkaCa.js';
 
 const log = childLogger({ handler: 'tochkaSync' });
 
 // ── Константы ──────────────────────────────────────────────────────────────
 
 const API_BASE = 'https://enter.tochka.com/uapi/open-banking/v1.0';
+
+// Точка перешла на сертификат российского корневого CA (Минцифры), которому
+// Node/Vercel не доверяют по умолчанию → TLS падал с «fetch failed». Свой
+// dispatcher с этим CA — ТОЛЬКО для запросов к Точке (проверка сертификата
+// остаётся включённой, просто расширяем список доверенных корней).
+const tochkaDispatcher = new Agent({ connect: { ca: TOCHKA_CA } });
+
+/** fetch к Точке через dispatcher с российским CA. */
+type FetchWithDispatcher = RequestInit & { dispatcher?: unknown };
+function tochkaFetch(url: string, init: FetchWithDispatcher): Promise<Response> {
+  return fetch(url, { ...init, dispatcher: tochkaDispatcher } as unknown as RequestInit);
+}
 const MY_INN = '231149826704';
 
 /** UUID ИП Карина Еремян (счета Точки с префиксом 40802). */
@@ -266,7 +280,7 @@ function accountNumber(accountId: string): string {
 
 async function apiGet(path: string, token: string): Promise<unknown> {
   const url = `${API_BASE}${path}`;
-  const res = await fetch(url, {
+  const res = await tochkaFetch(url, {
     method: 'GET',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -281,7 +295,7 @@ async function apiGet(path: string, token: string): Promise<unknown> {
 
 async function apiPost(path: string, body: unknown, token: string): Promise<unknown> {
   const url = `${API_BASE}${path}`;
-  const res = await fetch(url, {
+  const res = await tochkaFetch(url, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
