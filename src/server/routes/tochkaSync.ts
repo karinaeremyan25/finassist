@@ -69,42 +69,52 @@ export const tochkaSyncHandler: ApiHandler = async (req): Promise<ApiResponse> =
 
   // ── Синхронизация ────────────────────────────────────────────────────────
 
+  // РАЗВЯЗКА: синк и попутные задачи (отчёт/алерты/ФОТ) НЕЗАВИСИМЫ. Если синк
+  // Точки падает (напр. «fetch failed» / протух токен) — отчёт всё равно уходит.
+  // Отчёт читает данные из БД, ему не нужна живая Точка. Так «отчёт не пришёл»
+  // из-за проблем с Точкой больше не случится.
+
+  let result: Awaited<ReturnType<typeof syncTochka>> | null = null;
+  let syncError: string | null = null;
   try {
-    const result = await syncTochka();
+    result = await syncTochka();
+  } catch (err) {
+    syncError = err instanceof Error ? err.message : String(err);
+    log.error(
+      { handler: 'tochka_sync', latency_ms: Date.now() - start, error: syncError },
+      'tochka_sync_error'
+    );
+  }
 
-    // Попутно (только для крон-запусков) проверяем «молчащие» источники и шлём
-    // алерт владельцу/бухгалтерам. В отдельном try/catch — сторож не должен
-    // ронять ответ синка. Throttle внутри (раз в 3 дня на источник) не даёт спамить.
-    if (isCronRequest) {
-      try {
-        const wd = await checkSilentSources();
-        log.info(
-          { handler: 'tochka_sync', watchdog_alerted: wd.alerted, watchdog_silent: wd.silent },
-          'source_watchdog_piggyback'
-        );
-      } catch (wdErr) {
-        log.error({ handler: 'tochka_sync', error: String(wdErr) }, 'source_watchdog_piggyback_failed');
-      }
-
-      // Авто-уведомление бухгалтера о снятиях налички / переводах на карты людей
-      // (кому это ЗП). Дедуп внутри — каждая операция уведомляется один раз.
-      try {
-        const fn = await notifyFotDistribution();
-        log.info({ handler: 'tochka_sync', fot_candidates: fn.candidates, fot_notified: fn.notified }, 'fot_notify_piggyback');
-      } catch (fnErr) {
-        log.error({ handler: 'tochka_sync', error: String(fnErr) }, 'fot_notify_piggyback_failed');
-      }
-
-      // Ежедневный отчёт в «Фин.отдел ПСИЗ». Крон 2×/день (10:00 и 21:00 МСК)
-      // после свежего синка → отчёт с актуальными цифрами.
-      try {
-        const dr = await sendDailyReport();
-        log.info({ handler: 'tochka_sync', daily_report_sent: dr.sent }, 'daily_report_piggyback');
-      } catch (drErr) {
-        log.error({ handler: 'tochka_sync', error: String(drErr) }, 'daily_report_piggyback_failed');
-      }
+  // Попутные задачи только для крон-запусков. Каждая в своём try/catch и НЕ
+  // зависит от успеха синка — выполняются даже если syncTochka() упал.
+  if (isCronRequest) {
+    try {
+      const wd = await checkSilentSources();
+      log.info(
+        { handler: 'tochka_sync', watchdog_alerted: wd.alerted, watchdog_silent: wd.silent },
+        'source_watchdog_piggyback'
+      );
+    } catch (wdErr) {
+      log.error({ handler: 'tochka_sync', error: String(wdErr) }, 'source_watchdog_piggyback_failed');
     }
 
+    try {
+      const fn = await notifyFotDistribution();
+      log.info({ handler: 'tochka_sync', fot_candidates: fn.candidates, fot_notified: fn.notified }, 'fot_notify_piggyback');
+    } catch (fnErr) {
+      log.error({ handler: 'tochka_sync', error: String(fnErr) }, 'fot_notify_piggyback_failed');
+    }
+
+    try {
+      const dr = await sendDailyReport();
+      log.info({ handler: 'tochka_sync', daily_report_sent: dr.sent, sync_ok: result !== null }, 'daily_report_piggyback');
+    } catch (drErr) {
+      log.error({ handler: 'tochka_sync', error: String(drErr) }, 'daily_report_piggyback_failed');
+    }
+  }
+
+  if (result !== null) {
     log.info(
       {
         handler: 'tochka_sync',
@@ -115,7 +125,6 @@ export const tochkaSyncHandler: ApiHandler = async (req): Promise<ApiResponse> =
       },
       'tochka_sync_ok'
     );
-
     return {
       status: 200,
       body: {
@@ -126,22 +135,7 @@ export const tochkaSyncHandler: ApiHandler = async (req): Promise<ApiResponse> =
         dateTo: result.dateTo,
       },
     };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-
-    log.error(
-      {
-        handler: 'tochka_sync',
-        latency_ms: Date.now() - start,
-        // Не логируем сам токен — только сообщение об ошибке
-        error: message,
-      },
-      'tochka_sync_error'
-    );
-
-    return {
-      status: 200,
-      body: { ok: false, error: message },
-    };
   }
+
+  return { status: 200, body: { ok: false, error: syncError ?? 'sync failed' } };
 };
