@@ -34,9 +34,9 @@ export function categorizePersonal(descr: string | null): string {
   if (/ozon|озон/.test(s)) return 'Озон';
   if (/wildber|вайлдбер|wildberries|\bwb\b|валбер/.test(s)) return 'Wildberries';
   if (/детск|detmir|детский\s*мир|дочки|сынки|\bkids\b|toy|игрушк/.test(s)) return 'Детские';
-  if (/азс|заправ|gazprom|газпромнефт|lukoil|лукойл|rosneft|роснефт|нефт|tatneft|татнефт|shell|neftemag|трасса|\bбп\b|\bbp\b|circle\s*k|teboil|нефтемагистраль/.test(s)) return 'Заправка';
-  if (/пятероч|pyater|магнит|magnit|\bлента\b|\blenta\b|перекр|perekr|вкусвилл|vkusvill|ашан|auchan|дикси|diksi|азбука|metro|метро|\bокей\b|globus|глобус|продукт|мяснов|verol|самокат|samokat|яндекс\s*лавка|yandex\s*lavka|купер|kuper|сбермаркет/.test(s)) return 'Продукты';
-  if (/кафе|ресторан|cafe|coffee|кофе|pizza|пицц|dodo|додо|kfc|kfс|mcdonald|burger|бургер|шаурм|starbuck|шоколадниц|теремок|вкусно\s*и\s*точк|kebab|суши|sushi|\bбар\b|\bpub\b|столов|блинн|донер|tanuki|тануки|якитори/.test(s)) return 'Кафе/рестораны';
+  if (/азс|\bazs\b|заправ|gazprom|газпромнефт|\bgpn\b|lukoil|лукойл|rosneft|роснефт|нефт|neft|tatneft|татнефт|shell|трасса|\bбп\b|\bbp\b|circle\s*k|teboil|benzin|бензин|\bfuel\b|petrol/.test(s)) return 'Заправка';
+  if (/пятероч|pyater|магнит|magnit|\bлента\b|\blenta\b|перекр|perekr|вкусвилл|vkusvill|ашан|auchan|дикси|diksi|азбука|\bmetro\b|метро|\bокей\b|globus|глобус|продукт|produkt|мяснов|самокат|samokat|яндекс\s*лавка|yandex\s*lavka|lavka|купер|kuper|сбермаркет|\bmarket\b|supermarket|пекарн|bakery|гастроном|produkty/.test(s)) return 'Продукты';
+  if (/кафе|\bkafe\b|ресторан|restoran|cafe|coffee|\bкофе\b|kofe|pizza|пицц|dodo|додо|\bkfc\b|mcdonald|burger|бургер|шаурм|shaurm|starbuck|шоколадниц|теремок|вкусно\s*и\s*точк|kebab|суши|sushi|\bбар\b|\bpub\b|столов|блинн|донер|doner|tanuki|тануки|якитори|coffeeshop|kofejn|кофейн/.test(s)) return 'Кафе/рестораны';
   return 'Прочее';
 }
 
