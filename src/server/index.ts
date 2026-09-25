@@ -17,6 +17,7 @@ import { tochkaSyncHandler } from './routes/tochkaSync.js';
 import { sourceWatchdogHandler } from './routes/sourceWatchdog.js';
 import { dailyReportHandler } from './routes/dailyReport.js';
 import { telegramWebhookHandler } from './routes/telegramWebhook.js';
+import { personalSpendingCronHandler } from './routes/personalSpending.js';
 import { adminUsersHandler } from './routes/admin.js';
 import { planHandler } from './routes/plan.js';
 import {
@@ -71,6 +72,10 @@ export function buildRouter(): Router {
 
   // ── Telegram webhook (приём входящих: /start, ответы бухгалтера) ──────────
   router.post('/api/telegram/webhook', telegramWebhookHandler);
+
+  // ── Личные траты Карины (карта …7820) в личку ────────────────────────────
+  router.add('GET', '/api/cron/personal-spending', personalSpendingCronHandler);
+  router.add('POST', '/api/cron/personal-spending', personalSpendingCronHandler);
 
   // Mini App session
   router.post('/api/webapp/session', sessionHandler);
