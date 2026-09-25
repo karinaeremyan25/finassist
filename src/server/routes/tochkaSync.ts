@@ -21,6 +21,7 @@ import { syncTochka } from '../../services/integrations/tochkaSync.js';
 import { checkSilentSources } from '../../services/sourceWatchdog.js';
 import { notifyFotDistribution } from '../../services/fotNotify.js';
 import { sendDailyReport } from '../../services/dailyReport.js';
+import { sendPersonalReport } from '../../services/personalSpending.js';
 import { resolveWebAppUser, unauthorizedResponse, WebAppAuthError } from '../auth.js';
 import { childLogger } from '../../utils/logger.js';
 import type { ApiHandler, ApiResponse } from '../http.js';
@@ -111,6 +112,14 @@ export const tochkaSyncHandler: ApiHandler = async (req): Promise<ApiResponse> =
       log.info({ handler: 'tochka_sync', daily_report_sent: dr.sent, sync_ok: result !== null }, 'daily_report_piggyback');
     } catch (drErr) {
       log.error({ handler: 'tochka_sync', error: String(drErr) }, 'daily_report_piggyback_failed');
+    }
+
+    // Личные траты Карины (карта …7820) — раз в неделю в личку (дедуп по ISO-неделе).
+    try {
+      const ps = await sendPersonalReport(true);
+      log.info({ handler: 'tochka_sync', personal_spending_sent: ps.sent }, 'personal_spending_piggyback');
+    } catch (psErr) {
+      log.error({ handler: 'tochka_sync', error: String(psErr) }, 'personal_spending_piggyback_failed');
     }
   }
 

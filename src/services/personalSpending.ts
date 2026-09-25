@@ -164,11 +164,35 @@ export interface PersonalSendResult {
   sampleDescriptions: string[];
 }
 
-/** Собирает и отправляет сводку личных трат Карине в личку. */
-export async function sendPersonalReport(): Promise<PersonalSendResult> {
+/** ISO-неделя как ключ дедупа: '2026-W39'. */
+function isoWeekKey(): string {
+  const d = new Date(Date.now() + 3 * 3600 * 1000);
+  const target = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  const day = (target.getUTCDay() + 6) % 7;
+  target.setUTCDate(target.getUTCDate() - day + 3);
+  const firstThu = new Date(Date.UTC(target.getUTCFullYear(), 0, 4));
+  const week = 1 + Math.round(((target.getTime() - firstThu.getTime()) / 86400000 - 3 + ((firstThu.getUTCDay() + 6) % 7)) / 7);
+  return `${target.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
+}
+
+/**
+ * Собирает и отправляет сводку личных трат Карине в личку.
+ * dedupWeekly=true — не чаще раза в ISO-неделю (для авто-отправки из синка).
+ */
+export async function sendPersonalReport(dedupWeekly = false): Promise<PersonalSendResult> {
+  if (dedupWeekly) {
+    const key = `personal_spending:${isoWeekKey()}`;
+    const exists = await sql<{ one: number }[]>`SELECT 1 AS one FROM alert_log WHERE type = ${key} LIMIT 1`;
+    if (exists.length > 0) {
+      return { sent: false, weekTotal: '—', monthTotal: '—', sampleDescriptions: [] };
+    }
+  }
   const report = await buildPersonalReport();
   const chat = await chatId();
   const sent = await sendTg(chat, report.text);
+  if (sent && dedupWeekly) {
+    await sql`INSERT INTO alert_log (type, sent_to, message) VALUES (${'personal_spending:' + isoWeekKey()}, ${BigInt(chat)}, ${'personal spending weekly'})`;
+  }
   log.info({ sent, week: Number(report.week.total), month: Number(report.month.total) }, 'personal_report_done');
   return {
     sent,
