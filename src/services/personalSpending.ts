@@ -25,11 +25,8 @@ const MONTHS_GEN = [
   'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря',
 ];
 
-/** Порядок вывода категорий. */
-const CATEGORY_ORDER = ['Продукты', 'Озон', 'Wildberries', 'Кафе/рестораны', 'Заправка', 'Детские', 'Прочее'];
-
-/** Категория личной траты по описанию операции (мерчант/терминал). */
-export function categorizePersonal(descr: string | null): string {
+/** Категория личной траты по мерчанту. null — не распознано (покажем по названию). */
+export function categorizePersonal(descr: string | null): string | null {
   const s = (descr ?? '').toLowerCase();
   if (/ozon|озон/.test(s)) return 'Озон';
   if (/wildber|вайлдбер|wildberries|\bwb\b|валбер/.test(s)) return 'Wildberries';
@@ -37,7 +34,23 @@ export function categorizePersonal(descr: string | null): string {
   if (/азс|\bazs\b|заправ|gazprom|газпромнефт|\bgpn\b|lukoil|лукойл|rosneft|роснефт|нефт|neft|tatneft|татнефт|shell|трасса|\bбп\b|\bbp\b|circle\s*k|teboil|benzin|бензин|\bfuel\b|petrol/.test(s)) return 'Заправка';
   if (/пятероч|pyater|магнит|magnit|\bлента\b|\blenta\b|перекр|perekr|вкусвилл|vkusvill|ашан|auchan|дикси|diksi|азбука|\bmetro\b|метро|\bокей\b|globus|глобус|продукт|produkt|мяснов|самокат|samokat|яндекс\s*лавка|yandex\s*lavka|lavka|купер|kuper|сбермаркет|\bmarket\b|supermarket|пекарн|bakery|гастроном|produkty/.test(s)) return 'Продукты';
   if (/кафе|\bkafe\b|ресторан|restoran|cafe|coffee|\bкофе\b|kofe|pizza|пицц|dodo|додо|\bkfc\b|mcdonald|burger|бургер|шаурм|shaurm|starbuck|шоколадниц|теремок|вкусно\s*и\s*точк|kebab|суши|sushi|\bбар\b|\bpub\b|столов|блинн|донер|doner|tanuki|тануки|якитори|coffeeshop|kofejn|кофейн/.test(s)) return 'Кафе/рестораны';
-  return 'Прочее';
+  return null;
+}
+
+/** Имя мерчанта из описания Точки: «Покупка товара(Терминал:NAME,адрес…)» → NAME. */
+export function merchantName(descr: string | null): string {
+  const s = descr ?? '';
+  const m = /Терминал:([^,]+)/i.exec(s);
+  let name = (m?.[1] ?? '').trim();
+  if (name.length === 0) name = s.slice(0, 32).trim() || 'без названия';
+  // Чистим служебные префиксы вроде «PAW*», «IP », номера терминалов.
+  name = name.replace(/^(PAW\*|YM\*|RSP\*|SP\*|TT\*)/i, '').replace(/\s+\d{3,}$/, '').trim();
+  return name.length > 0 ? name : 'без названия';
+}
+
+/** Метка для отчёта: известная категория ИЛИ имя мерчанта (чтобы «Прочего» не было). */
+function labelFor(descr: string | null): string {
+  return categorizePersonal(descr) ?? merchantName(descr);
 }
 
 interface Row { occurred_at: string; amount: bigint; description: string | null }
@@ -75,8 +88,8 @@ function summarize(rows: Row[], days: number): PeriodSummary {
   let count = 0;
   for (const r of rows) {
     if (new Date(r.occurred_at).getTime() < cutoff) continue;
-    const cat = categorizePersonal(r.description);
-    byCat.set(cat, (byCat.get(cat) ?? 0n) + r.amount);
+    const label = labelFor(r.description);
+    byCat.set(label, (byCat.get(label) ?? 0n) + r.amount);
     total += r.amount;
     count++;
   }
@@ -89,10 +102,8 @@ function renderPeriod(title: string, label: string, s: PeriodSummary): string {
     lines.push('  трат нет');
     return lines.join('\n');
   }
-  const entries = CATEGORY_ORDER
-    .map((c) => [c, s.byCat.get(c) ?? 0n] as const)
-    .filter(([, v]) => v > 0n)
-    .sort((a, b) => (a[1] < b[1] ? 1 : -1));
+  // Все метки по убыванию суммы — известные категории и мерчанты по имени.
+  const entries = [...s.byCat.entries()].sort((a, b) => (a[1] < b[1] ? 1 : -1));
   for (const [c, v] of entries) lines.push(`  • ${c} — ${fmt(v)}`);
   lines.push(`  <b>Итого — ${fmt(s.total)}</b>`);
   return lines.join('\n');
@@ -123,10 +134,10 @@ export async function buildPersonalReport(): Promise<PersonalReport> {
     renderPeriod('За месяц', periodLabel(30), month),
   ].join('\n');
 
-  // Для диагностики: примеры «Прочее», чтобы донастроить категории.
+  // Для диагностики: нераспознанные мерчанты, чтобы донастроить категории.
   const sampleDescriptions = rows
-    .filter((r) => categorizePersonal(r.description) === 'Прочее')
-    .slice(0, 15)
+    .filter((r) => categorizePersonal(r.description) === null)
+    .slice(0, 20)
     .map((r) => (r.description ?? '').slice(0, 70));
 
   return { text, week, twoWeeks, month, sampleDescriptions };
