@@ -13,7 +13,7 @@
 
 import { createHash } from 'node:crypto';
 import { config } from '../../config.js';
-import { sendDailyReport } from '../../services/dailyReport.js';
+import { buildDailyReportText, sendDailyReport } from '../../services/dailyReport.js';
 import { childLogger } from '../../utils/logger.js';
 import type { ApiHandler, ApiResponse } from '../http.js';
 
@@ -38,7 +38,11 @@ export const dailyReportHandler: ApiHandler = async (req): Promise<ApiResponse> 
   }
 
   try {
-    const result = await sendDailyReport();
+    // ?preview=1 — вернуть текст без отправки; ?force=1 — отправить вне слота (без дедупа).
+    if (req.query['preview'] === '1') {
+      return { status: 200, body: { ok: true, text: await buildDailyReportText() } };
+    }
+    const result = await sendDailyReport(req.query['force'] === '1');
     log.info(
       { handler: 'daily_report', latency_ms: Date.now() - start, sent: result.sent },
       'daily_report_ok'
