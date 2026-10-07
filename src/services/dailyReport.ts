@@ -5,7 +5,8 @@
  *   ДОХОД:  план на месяц / факт с 1-го / план сегодня / факт сегодня / % выполнения
  *   РАСХОД: то же
  *   ОСТАТКИ: фонды ИП с % (Точка ИП, Благодарность 65%, Кредиты 10%, Резерв 7%,
- *            Земля 5%, Налог 8%), Итого ИП, ООО Ассургина, ИТОГО
+ *            Земля 5%, Налог 8%), Итого ИП, ООО (расчётный + фонд Налоги − Целитель), ИТОГО
+ *   ЦЕЛИТЕЛЬ: отдельным блоком — чужие деньги, в итоги не входят
  *
  * Отправляется 2×/день в 11:00 и 20:30 МСК. Точность времени — внешним кроном
  * (cron-job.org → /api/cron/daily-report), плюс подстраховка попутно из tochkaSync.
@@ -95,11 +96,13 @@ async function pnlActuals(
     entityCode !== undefined
       ? sql`AND entity_id = (SELECT id FROM entities WHERE code = ${entityCode})`
       : sql``;
+  // Деньги Целителя — НЕ наши: исключаем из дохода/расхода (см. healerFilter).
   const inc = await sql<{ total: bigint }[]>`
     SELECT COALESCE(SUM(amount_rub), 0)::bigint AS total FROM transactions
     WHERE deleted_at IS NULL AND flow_type = 'income'
       AND pnl_category IS DISTINCT FROM 'loan'
       AND occurred_at >= ${from}::date AND occurred_at < ${to}::date
+      AND NOT ${healerFilter()}
       ${ent}
   `;
   const exp = await sql<{ total: bigint }[]>`
@@ -107,9 +110,42 @@ async function pnlActuals(
     WHERE deleted_at IS NULL AND flow_type = 'expense'
       AND (is_personal = false OR is_personal IS NULL)
       AND occurred_at >= ${from}::date AND occurred_at < ${to}::date
+      AND NOT ${healerFilter()}
       ${ent}
   `;
   return { income: inc[0]?.total ?? 0n, expense: exp[0]?.total ?? 0n };
+}
+
+/**
+ * Деньги курса «Целитель» — НЕ деньги Карины (чужой поток, идёт через ООО
+ * Ассургина). Признак — «Целитель» в назначении платежа Точки
+ * («Заказ 690: … Курс Целитель x 1.0») или в контрагенте. Такие операции
+ * в отчёте выводятся отдельным блоком и НЕ входят в наш доход/расход/ИТОГО.
+ */
+function healerFilter(): ReturnType<typeof sql> {
+  return sql`(
+    entity_id = (SELECT id FROM entities WHERE code = 'OOO')
+    AND (COALESCE(description, '') ILIKE '%целител%' OR COALESCE(counterparty, '') ILIKE '%целител%')
+  )`;
+}
+
+/** Поток Целителя: приход/расход за период [from, to); без границ — за всё время. */
+async function healerActuals(
+  from?: string,
+  to?: string
+): Promise<{ income: bigint; expense: bigint }> {
+  const period =
+    from !== undefined && to !== undefined
+      ? sql`AND occurred_at >= ${from}::date AND occurred_at < ${to}::date`
+      : sql``;
+  const rows = await sql<{ income: bigint; expense: bigint }[]>`
+    SELECT
+      COALESCE(SUM(amount_rub) FILTER (WHERE flow_type = 'income'), 0)::bigint AS income,
+      COALESCE(SUM(amount_rub) FILTER (WHERE flow_type = 'expense'), 0)::bigint AS expense
+    FROM transactions
+    WHERE deleted_at IS NULL AND ${healerFilter()} ${period}
+  `;
+  return { income: rows[0]?.income ?? 0n, expense: rows[0]?.expense ?? 0n };
 }
 
 async function sendTg(chatId: string, text: string): Promise<boolean> {
@@ -161,6 +197,9 @@ export async function buildDailyReportText(): Promise<string> {
   const tIp = await pnlActuals(today, tomorrow, 'IP');
   const tOoo = await pnlActuals(today, tomorrow, 'OOO');
   const funds = await fundBalances();
+  const hMonth = await healerActuals(monthStart, nextMonthStart);
+  const hToday = await healerActuals(today, tomorrow);
+  const hAll = await healerActuals();
 
   // Дневной план — месяц ÷ число дней (равномерно).
   const days = BigInt(daysInMonth);
@@ -172,7 +211,13 @@ export async function buildDailyReportText(): Promise<string> {
   const ipCodes = ['rs_ip', 'gratitude', 'credit', 'reserve_ip', 'land', 'tax_ip'];
   const ipTotal = ipCodes.reduce((s, c) => s + bal(c), 0n);
   const oooTotal = bal('rs_ooo') + bal('ooo_acc2');
-  const grandTotal = ipTotal + oooTotal;
+  // Остаток Целителя на счетах ООО = всё пришедшее за Целителя − всё ушедшее по нему.
+  // Не больше, чем реально лежит на ООО, и не меньше нуля.
+  let healerBalance = hAll.income - hAll.expense;
+  if (healerBalance < 0n) healerBalance = 0n;
+  if (healerBalance > oooTotal) healerBalance = oooTotal;
+  const oooOwn = oooTotal - healerBalance;
+  const grandTotal = ipTotal + oooOwn; // ИТОГО — только наши деньги, без Целителя
 
   const monthNom = MONTHS_NOM[m - 1];
   const monthGen = MONTHS_GEN[m - 1];
@@ -188,7 +233,7 @@ export async function buildDailyReportText(): Promise<string> {
   const lines = [
     `📊 <b>ОТЧЁТ за ${dateGen}</b>`,
     ``,
-    `<b>ДОХОД</b>`,
+    `<b>ДОХОД</b> (наш, без Целителя)`,
     `План на ${monthNom} — ${fmt(planIncome)}`,
     `Факт 1–${d} ${monthGen} — ${fmt(actAll.income)}`,
     `План/день (в среднем) — ${fmt(dPlanIncome)}`,
@@ -228,8 +273,20 @@ export async function buildDailyReportText(): Promise<string> {
     fundLine('Налог', 'tax_ip'),
     `<b>Итого ИП — ${fmt(ipTotal)}</b>`,
     ``,
-    `ООО Ассургина — ${fmt(oooTotal)}`,
-    `<b>ИТОГО — ${fmt(grandTotal)}</b>`,
+    `<b>ООО Ассургина</b>`,
+    `Расчётный счёт — ${fmt(bal('rs_ooo'))}`,
+    `Фонд Налоги — ${fmt(bal('ooo_acc2'))}`,
+    `Из них деньги Целителя — −${fmt(healerBalance)}`,
+    `<b>Итого Ассургина (наше) — ${fmt(oooOwn)}</b>`,
+    `<b>ИТОГО (наши деньги) — ${fmt(grandTotal)}</b>`,
+    ``,
+    `—`,
+    ``,
+    `<b>ЦЕЛИТЕЛЬ — не наши деньги</b> (на счёте ООО, в итоги выше не входят)`,
+    `Поступило 1–${d} ${monthGen} — ${fmt(hMonth.income)}`,
+    `Поступило сегодня — ${fmt(hToday.income)}`,
+    `Расход 1–${d} ${monthGen} — ${fmt(hMonth.expense)}`,
+    `<b>Остаток Целителя на ООО — ${fmt(healerBalance)}</b>`,
   ];
   return lines.join('\n');
 }
