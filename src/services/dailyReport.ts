@@ -20,6 +20,7 @@ import { sql } from '../db/client.js';
 import { config } from '../config.js';
 import { childLogger } from '../utils/logger.js';
 import { getMonthlyPlan } from '../db/repositories/plans.js';
+import { fetchHealerPayments, type HealerPayment } from './integrations/tochkaHealer.js';
 
 const log = childLogger({ handler: 'daily-report' });
 
@@ -96,13 +97,11 @@ async function pnlActuals(
     entityCode !== undefined
       ? sql`AND entity_id = (SELECT id FROM entities WHERE code = ${entityCode})`
       : sql``;
-  // Деньги Целителя — НЕ наши: исключаем из дохода/расхода (см. healerFilter).
   const inc = await sql<{ total: bigint }[]>`
     SELECT COALESCE(SUM(amount_rub), 0)::bigint AS total FROM transactions
     WHERE deleted_at IS NULL AND flow_type = 'income'
       AND pnl_category IS DISTINCT FROM 'loan'
       AND occurred_at >= ${from}::date AND occurred_at < ${to}::date
-      AND NOT ${healerFilter()}
       ${ent}
   `;
   const exp = await sql<{ total: bigint }[]>`
@@ -110,42 +109,20 @@ async function pnlActuals(
     WHERE deleted_at IS NULL AND flow_type = 'expense'
       AND (is_personal = false OR is_personal IS NULL)
       AND occurred_at >= ${from}::date AND occurred_at < ${to}::date
-      AND NOT ${healerFilter()}
       ${ent}
   `;
   return { income: inc[0]?.total ?? 0n, expense: exp[0]?.total ?? 0n };
 }
 
 /**
- * Деньги курса «Целитель» — НЕ деньги Карины (чужой поток, идёт через ООО
- * Ассургина). Признак — «Целитель» в назначении платежа Точки
- * («Заказ 690: … Курс Целитель x 1.0») или в контрагенте. Такие операции
- * в отчёте выводятся отдельным блоком и НЕ входят в наш доход/расход/ИТОГО.
+ * Деньги курса «Целитель» — НЕ деньги Карины (чужой поток через ООО Ассургина).
+ * Источник — API эквайринга Точки (см. tochkaHealer.ts). Эти суммы вычитаются
+ * из нашего дохода и остатка ООО и выводятся отдельным блоком.
  */
-function healerFilter(): ReturnType<typeof sql> {
-  return sql`(
-    entity_id = (SELECT id FROM entities WHERE code = 'OOO')
-    AND (COALESCE(description, '') ILIKE '%целител%' OR COALESCE(counterparty, '') ILIKE '%целител%')
-  )`;
-}
-
-/** Поток Целителя: приход/расход за период [from, to); без границ — за всё время. */
-async function healerActuals(
-  from?: string,
-  to?: string
-): Promise<{ income: bigint; expense: bigint }> {
-  const period =
-    from !== undefined && to !== undefined
-      ? sql`AND occurred_at >= ${from}::date AND occurred_at < ${to}::date`
-      : sql``;
-  const rows = await sql<{ income: bigint; expense: bigint }[]>`
-    SELECT
-      COALESCE(SUM(amount_rub) FILTER (WHERE flow_type = 'income'), 0)::bigint AS income,
-      COALESCE(SUM(amount_rub) FILTER (WHERE flow_type = 'expense'), 0)::bigint AS expense
-    FROM transactions
-    WHERE deleted_at IS NULL AND ${healerFilter()} ${period}
-  `;
-  return { income: rows[0]?.income ?? 0n, expense: rows[0]?.expense ?? 0n };
+function healerSum(payments: HealerPayment[], from: string, to: string): bigint {
+  return payments
+    .filter((p) => p.date >= from && p.date < to)
+    .reduce((s, p) => s + p.amount, 0n);
 }
 
 async function sendTg(chatId: string, text: string): Promise<boolean> {
@@ -197,9 +174,14 @@ export async function buildDailyReportText(): Promise<string> {
   const tIp = await pnlActuals(today, tomorrow, 'IP');
   const tOoo = await pnlActuals(today, tomorrow, 'OOO');
   const funds = await fundBalances();
-  const hMonth = await healerActuals(monthStart, nextMonthStart);
-  const hToday = await healerActuals(today, tomorrow);
-  const hAll = await healerActuals();
+  // Целитель: если API Точки недоступен — не отправляем отчёт со смешанными деньгами.
+  const healer = await fetchHealerPayments(today);
+  const hMonth = healerSum(healer, monthStart, nextMonthStart);
+  const hToday = healerSum(healer, today, tomorrow);
+  const hAll = healer.reduce((s, p) => s + p.amount, 0n);
+  // Наш доход = всё − Целитель (Целитель весь на ООО).
+  const ownIncomeMonth = actAll.income - hMonth;
+  const ownIncomeToday = tAll.income - hToday;
 
   // Дневной план — месяц ÷ число дней (равномерно).
   const days = BigInt(daysInMonth);
@@ -213,7 +195,8 @@ export async function buildDailyReportText(): Promise<string> {
   const oooTotal = bal('rs_ooo') + bal('ooo_acc2');
   // Остаток Целителя на счетах ООО = всё пришедшее за Целителя − всё ушедшее по нему.
   // Не больше, чем реально лежит на ООО, и не меньше нуля.
-  let healerBalance = hAll.income - hAll.expense;
+  // Выплаты владельцу Целителя пока не помечаются — остаток = все оплаты курса.
+  let healerBalance = hAll;
   if (healerBalance < 0n) healerBalance = 0n;
   if (healerBalance > oooTotal) healerBalance = oooTotal;
   const oooOwn = oooTotal - healerBalance;
@@ -235,10 +218,10 @@ export async function buildDailyReportText(): Promise<string> {
     ``,
     `<b>ДОХОД</b> (наш, без Целителя)`,
     `План на ${monthNom} — ${fmt(planIncome)}`,
-    `Факт 1–${d} ${monthGen} — ${fmt(actAll.income)}`,
+    `Факт 1–${d} ${monthGen} — ${fmt(ownIncomeMonth)}`,
     `План/день (в среднем) — ${fmt(dPlanIncome)}`,
-    `Факт сегодня — ${fmt(tAll.income)}`,
-    `Выполнение плана — <b>${pct(actAll.income, planIncome === 0n ? null : planIncome)}</b>`,
+    `Факт сегодня — ${fmt(ownIncomeToday)}`,
+    `Выполнение плана — <b>${pct(ownIncomeMonth, planIncome === 0n ? null : planIncome)}</b>`,
     ``,
     `<b>РАСХОД</b>`,
     `<b>ИП</b>`,
@@ -283,10 +266,10 @@ export async function buildDailyReportText(): Promise<string> {
     `—`,
     ``,
     `<b>ЦЕЛИТЕЛЬ — не наши деньги</b> (на счёте ООО, в итоги выше не входят)`,
-    `Поступило 1–${d} ${monthGen} — ${fmt(hMonth.income)}`,
-    `Поступило сегодня — ${fmt(hToday.income)}`,
-    `Расход 1–${d} ${monthGen} — ${fmt(hMonth.expense)}`,
-    `<b>Остаток Целителя на ООО — ${fmt(healerBalance)}</b>`,
+    `Поступило 1–${d} ${monthGen} — ${fmt(hMonth)}`,
+    `Поступило сегодня — ${fmt(hToday)}`,
+    `Поступило всего — ${fmt(hAll)}`,
+    `<b>Деньги Целителя на ООО — ${fmt(healerBalance)}</b>`,
   ];
   return lines.join('\n');
 }
